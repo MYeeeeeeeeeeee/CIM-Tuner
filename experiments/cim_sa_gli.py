@@ -64,8 +64,11 @@ class SimulateAnnealing_CIMACC_on_gli:
             if (type(iter) is not int or iter <= 0 or type(epoch) is not int or epoch <= 0 or
                 type(proposal_budget) is not int or proposal_budget <= 0 or
                 not all(m.isfinite(v) for v in (T0, Tf, alpha)) or
-                not 0 < Tf < T0 or not 0 < alpha < 1 or input_weight_switch_enable):
-                raise ValueError("固定模式需要正預算、有限退火參數與明確關閉 NR/R switch")
+                not 0 < Tf < T0 or not 0 < alpha < 1):
+                raise ValueError("固定模式需要正預算與有限退火參數")
+            if (len(gli) not in (2, 3) or len(gli) == 3 and gli[2] not in ('NR', 'R') or
+                input_weight_switch_enable and len(gli) != 3):
+                raise ValueError("固定模式開啟 switch 時需要明確 NR/R role")
 
     def generate_new_acc(self, acc0):
         if self.fixed_hardware:
@@ -96,6 +99,9 @@ class SimulateAnnealing_CIMACC_on_gli:
 
     def generate_new_gli(self, gli):
         if random()>0.5 and self.df_var[0]:
+            if self.fixed_hardware and len(gli) == 3:
+                return (gli[0], (gli[1][2], gli[1][1], gli[1][0]),
+                        'R' if gli[2] == 'NR' else 'NR')
             return (gli[0],(gli[1][2], gli[1][1], gli[1][0]))
         else:
             return gli
@@ -179,6 +185,10 @@ class SimulateAnnealing_CIMACC_on_gli:
                 raise ValueError("callback 分數與實測 cycles 不一致")
             result = deepcopy(dict(acc=acc.backend_config, gli=gli, dataflow=dataflow,
                                    cycles=score, evaluation=record))
+            if len(gli) == 3:
+                if record.get('operand_role') != gli[2]:
+                    raise ValueError("callback operand role 與原候選不符")
+                result['operand_role'] = gli[2]
             if self.reference_cycles is None:
                 self.reference_cycles = score
                 self.ms_ratio = 1.0 / score
