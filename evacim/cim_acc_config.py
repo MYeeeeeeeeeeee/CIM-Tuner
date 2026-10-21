@@ -1,4 +1,6 @@
 import configparser
+from copy import deepcopy
+from types import SimpleNamespace
 
 class CIM:
     def __init__(
@@ -49,6 +51,25 @@ class CIM:
         
 
 class CIMACC:
+    @classmethod
+    def from_backend_config(cls, caller):
+        """固定目標的功能結構；不建立 analytical CIM，也不讀取 PPA。"""
+        acc = cls.__new__(cls)
+        acc.backend_config = deepcopy(caller)
+        acc.cim = SimpleNamespace(name="backend_behavioral", single_macro_al=caller['logicalRows'],
+            single_macro_pc=caller['logicalCols'], data_width_input=caller['inputBits'],
+            data_width_weight=caller['weightBits'], data_width_output=32)
+        acc.macro_row, acc.macro_col = 2, 4
+        acc.AL = acc.cim.single_macro_al * acc.macro_col
+        acc.PC = acc.cim.single_macro_pc * acc.macro_row
+        acc.SCR = caller['macroStorageSets']
+        acc.freq = caller['frequencyMHz']
+        acc.placement = caller['placement']
+        # 原版 padded depth／單一 bus 並無等價部署，不以零或換算值冒充。
+        acc.is_size = acc.os_size = acc.IS_DEPTH = acc.OS_DEPTH = None
+        acc.bus_width = acc.BUS_WIDTH_for_Compile = acc.BUS_WIDTH_real = None
+        return acc
+
     def __init__(
         self,
         cim,
@@ -81,6 +102,9 @@ class CIMACC:
 
     
     def printf(self, power_print = 0):
+        if hasattr(self, 'backend_config'):
+            print("固定 behavioral／PPA-off 目標:", self.backend_config, flush=True)
+            return
         print("###### ACC Parameters ######", flush=True)
         print("cim type:   ", self.cim.name, flush=True)
         print("bus_width:  ", self.bus_width, flush=True)

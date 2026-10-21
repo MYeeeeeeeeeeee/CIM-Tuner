@@ -1,11 +1,10 @@
 import math as m
-from random import random, seed
-import matplotlib.pyplot as plt
+from random import random, seed, getstate
+from copy import deepcopy
 from evacim import cim_acc_config as cfg
-from evacim import area_modeling
-from evacim import sim
 
 def func_cima(acc0, gli, dataflow):
+    from evacim import sim
     m = sim.evaluate(acc0, gli, dataflow)
     return -m['throughput'], m['area'][7]*1e-6
 
@@ -19,7 +18,8 @@ def get_random_bool():
         return 1
 
 class SimulateAnnealing_CIMACC_on_gli:
-    def __init__(self, func, acc0, gli, dataflow, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1, input_weight_switch_enable=True,input_weight_scheduling_enable = True, weight_tiling_enable = True):
+    def __init__(self, func, acc0, gli, dataflow, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1, input_weight_switch_enable=True,input_weight_scheduling_enable = True, weight_tiling_enable = True,
+                 fixed_hardware=False, proposal_budget=8, event_sink=None):
         """
         Annealing parameters
         :param iter: Number of internal cycles
@@ -50,10 +50,27 @@ class SimulateAnnealing_CIMACC_on_gli:
             'is_size_pow': 1,
             'os_size_pow': 1
         }
-        self.df_var = (input_weight_scheduling_enable, input_weight_scheduling_enable, weight_tiling_enable)
+        self.df_var = (input_weight_switch_enable, input_weight_scheduling_enable, weight_tiling_enable)
         self.history = {'f': [], 'T': [], 'c': []}
+        self.fixed_hardware = fixed_hardware
+        self.proposal_budget = proposal_budget
+        self.event_sink = event_sink
+        self.current = [None for _ in range(self.iter)]
+        self.best = None
+        self.proposals = 0
+        self.failure = None
+        self.reference_cycles = None
+        if fixed_hardware:
+            if (type(iter) is not int or iter <= 0 or type(epoch) is not int or epoch <= 0 or
+                type(proposal_budget) is not int or proposal_budget <= 0 or
+                not all(m.isfinite(v) for v in (T0, Tf, alpha)) or
+                not 0 < Tf < T0 or not 0 < alpha < 1 or input_weight_switch_enable):
+                raise ValueError("固定模式需要正預算、有限退火參數與明確關閉 NR/R switch")
 
     def generate_new_acc(self, acc0):
+        if self.fixed_hardware:
+            return acc0
+        from evacim import area_modeling
         while True:
             macro_row_new = acc0.macro_row + get_random_bool()*self.delta['macro_row']
             macro_col_new = acc0.macro_col + get_random_bool()*self.delta['macro_col']
@@ -97,15 +114,24 @@ class SimulateAnnealing_CIMACC_on_gli:
 
     def Metrospolis(self, f, f_new):
         if f_new <= f:
+            self.last_decision = {'probability': 1.0, 'random': None}
             return 1
         else:
             p = m.exp((f - f_new) * self.ms_ratio / self.T)
-            if random() < p:
+            draw = random()
+            self.last_decision = {'probability': p, 'random': draw}
+            if draw < p:
                 return 1
             else:
                 return 0
 
     def get_optimal(self):
+        if self.fixed_hardware:
+            valid = [(item['cycles'], i) for i, item in enumerate(self.current) if item]
+            if not valid:
+                return None, None, None
+            score, idx = min(valid)
+            return score, self.current[idx]['evaluation'], idx
         f_list = []
         area_list = []
         for i in range(self.iter):
@@ -117,6 +143,7 @@ class SimulateAnnealing_CIMACC_on_gli:
         return - f_best, area_list[idx], idx
 
     def plot(self, xlim=None, ylim=None):
+        import matplotlib.pyplot as plt
         plt.plot(self.history['c'], self.history['f'])
         plt.title('Simulate Annealing')
         # plt.xlabel('Temperature')
@@ -130,18 +157,93 @@ class SimulateAnnealing_CIMACC_on_gli:
         plt.show()
         plt.savefig("./plot/sa_gli.png")
 
+    def _emit(self, event, **fields):
+        if self.event_sink:
+            self.event_sink(deepcopy(dict(event=event, **fields)))
+
+    def _evaluate_fixed(self, acc, gli, dataflow):
+        try:
+            score, record = self.func(acc0=acc, gli=gli, dataflow=dataflow)
+            if not isinstance(record, dict) or record.get('status') not in ('passed', 'rejected', 'failed'):
+                raise ValueError("callback 回傳狀態不完整")
+            if record['status'] != 'passed':
+                if score is not None or not record.get('reason'):
+                    raise ValueError("拒絕／失敗不得回傳分數或省略原因")
+                if record['status'] == 'failed':
+                    self.failure = record['reason']
+                self._emit('evaluation', dataflow=dataflow, evaluation=record)
+                return None
+            if type(score) is not int or score <= 0 or record.get('functional_pass') is not True:
+                raise ValueError("成功評估必須包含正整數 cycles 與 golden 通過")
+            if record.get('totalMeasuredCycles') != score:
+                raise ValueError("callback 分數與實測 cycles 不一致")
+            result = deepcopy(dict(acc=acc.backend_config, gli=gli, dataflow=dataflow,
+                                   cycles=score, evaluation=record))
+            if self.reference_cycles is None:
+                self.reference_cycles = score
+                self.ms_ratio = 1.0 / score
+            if self.best is None or score < self.best['cycles']:
+                self.best = deepcopy(result)
+            self._emit('evaluation', result=result)
+            return result
+        except Exception as error:
+            self.failure = str(error)
+            self._emit('failure', reason=self.failure)
+            return None
+
+    def _fixed_result(self, stop_reason):
+        reason = self.failure or (stop_reason if self.best else 'no_valid_solution')
+        return dict(status='incomplete' if self.failure or self.best is None else 'complete',
+                    reason=reason, best=None if self.failure else deepcopy(self.best),
+                    best_observed=deepcopy(self.best), proposals=self.proposals,
+                    reference_cycles=self.reference_cycles, history=deepcopy(self.history))
+
     def run(self):
         count = 0
+        if self.fixed_hardware:
+            for i in range(self.iter):
+                self.current[i] = self._evaluate_fixed(self.accs[i], self.glis[i], self.dataflows[i])
+                if self.failure:
+                    return self._fixed_result('initial_failure')
         # annealing
         while self.epoch != 0:
             # iteration
             for i in range(self.iter):
-                f, _ = self.func(acc0 = self.accs[i], gli = self.glis[i], dataflow = self.dataflows[i])
+                if self.fixed_hardware:
+                    if self.proposals >= self.proposal_budget:
+                        return self._fixed_result('proposal_budget')
+                    before = deepcopy(self.current[i])
+                    best_before = deepcopy(self.best)
+                    rng_before = getstate()
+                    f = before['cycles'] if before else None
+                else:
+                    f, _ = self.func(acc0 = self.accs[i], gli = self.glis[i], dataflow = self.dataflows[i])
                 acc_new = self.generate_new_acc(self.accs[i])
                 gli_new = self.generate_new_gli(self.glis[i])
                 dataflow_new = self.generate_new_dataflow(self.dataflows[i])
-                f_new, _ = self.func(acc0 = acc_new, gli = gli_new, dataflow = dataflow_new)
-                if self.Metrospolis(f, f_new):
+                if self.fixed_hardware:
+                    self.proposals += 1
+                    self._emit('proposal', ordinal=self.proposals, chain=i, current=before,
+                        acc=acc_new.backend_config, gli=gli_new, dataflow=dataflow_new,
+                        methods=['generate_new_acc', 'generate_new_gli', 'generate_new_dataflow'],
+                        rng_before=rng_before, rng_after=getstate())
+                    new = self._evaluate_fixed(acc_new, gli_new, dataflow_new)
+                    if self.failure:
+                        return self._fixed_result('execution_failure')
+                    accepted = False
+                    self.last_decision = {'probability': None, 'random': None}
+                    if new is not None:
+                        accepted = f is None or bool(self.Metrospolis(f, new['cycles']))
+                    if accepted:
+                        self.current[i] = new
+                    self._emit('decision', ordinal=self.proposals, chain=i, temperature=self.T,
+                        reference_cycles=self.reference_cycles, before=before, proposal=new,
+                        accepted=accepted, after=self.current[i], best_before=best_before,
+                        best_after=self.best, **self.last_decision)
+                else:
+                    f_new, _ = self.func(acc0 = acc_new, gli = gli_new, dataflow = dataflow_new)
+                    accepted = self.Metrospolis(f, f_new)
+                if accepted:
                     self.accs[i] = acc_new
                     self.glis[i] = gli_new
                     self.dataflows[i] = dataflow_new
@@ -150,13 +252,16 @@ class SimulateAnnealing_CIMACC_on_gli:
             self.history['f'].append(ft)
             self.history['T'].append(self.T)
             self.history['c'].append(count)
-            print(ft, self.T,'\tidx:',idx, self.glis[idx], self.dataflows[idx], self.accs[idx].macro_row, self.accs[idx].macro_col, self.accs[idx].SCR, self.accs[idx].is_size, self.accs[idx].os_size)
+            if not self.fixed_hardware:
+                print(ft, self.T,'\tidx:',idx, self.glis[idx], self.dataflows[idx], self.accs[idx].macro_row, self.accs[idx].macro_col, self.accs[idx].SCR, self.accs[idx].is_size, self.accs[idx].os_size)
             # cooling
             self.T = self.T * self.alpha
             count += 1
             if self.T < self.Tf:
                 self.epoch -= 1
                 self.T = self.T0 
+        if self.fixed_hardware:
+            return self._fixed_result('temperature')
         # get optimal solution
         f_best, area, idx = self.get_optimal()
         self.accs[idx].printf()
