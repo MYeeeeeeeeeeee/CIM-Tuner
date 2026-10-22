@@ -52,14 +52,25 @@ class CIM:
 
 class CIMACC:
     @classmethod
-    def from_backend_config(cls, caller):
+    def from_backend_config(cls, caller, grid=None, binding_policy=None):
         """固定目標的功能結構；不建立 analytical CIM，也不讀取 PPA。"""
         acc = cls.__new__(cls)
         acc.backend_config = deepcopy(caller)
         acc.cim = SimpleNamespace(name="backend_behavioral", single_macro_al=caller['logicalRows'],
             single_macro_pc=caller['logicalCols'], data_width_input=caller['inputBits'],
             data_width_weight=caller['weightBits'], data_width_output=32)
-        acc.macro_row, acc.macro_col = 2, 4
+        acc.macro_row, acc.macro_col = (2, 4) if grid is None else grid
+        if grid is not None:
+            if (any(type(v) is not int for v in grid) or
+                tuple(grid) not in ((1, 8), (2, 4), (4, 2), (8, 1))):
+                raise ValueError("固定八 Macro 的 grid 不合法")
+            acc.binding_policy = binding_policy or 'identity'
+            if acc.binding_policy not in ('identity', 'slot_major'):
+                raise ValueError("未支援的階層部署 policy")
+            acc.binding = (list(range(8)) if acc.binding_policy == 'identity' else [0, 2, 4, 6, 1, 3, 5, 7])
+            acc.deployment_source = 'integration_fixed_8_macro'
+        elif binding_policy is not None:
+            raise ValueError("binding metadata 需要明確 grid")
         acc.AL = acc.cim.single_macro_al * acc.macro_col
         acc.PC = acc.cim.single_macro_pc * acc.macro_row
         acc.SCR = caller['macroStorageSets']

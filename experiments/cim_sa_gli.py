@@ -19,7 +19,8 @@ def get_random_bool():
 
 class SimulateAnnealing_CIMACC_on_gli:
     def __init__(self, func, acc0, gli, dataflow, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1, input_weight_switch_enable=True,input_weight_scheduling_enable = True, weight_tiling_enable = True,
-                 fixed_hardware=False, proposal_budget=8, event_sink=None):
+                 fixed_hardware=False, proposal_budget=8, event_sink=None,
+                 grid_domain=None, binding_domain=None):
         """
         Annealing parameters
         :param iter: Number of internal cycles
@@ -60,6 +61,22 @@ class SimulateAnnealing_CIMACC_on_gli:
         self.proposals = 0
         self.failure = None
         self.reference_cycles = None
+        self.grid_domain = None if grid_domain is None else tuple(tuple(g) for g in grid_domain)
+        self.binding_domain = None if binding_domain is None else tuple(binding_domain)
+        if self.grid_domain is not None:
+            if (not fixed_hardware or not self.grid_domain or
+                len(set(self.grid_domain)) != len(self.grid_domain) or
+                any(len(g) != 2 or any(type(v) is not int for v in g) or
+                    g not in ((1, 8), (2, 4), (4, 2), (8, 1)) for g in self.grid_domain)):
+                raise ValueError("mapping 模式需要非空且不重複的固定八 Macro grid domain")
+            if (acc0.macro_row, acc0.macro_col) not in self.grid_domain or not hasattr(acc0, 'binding'):
+                raise ValueError("初始 mapping 不屬於 domain 或缺少部署 metadata")
+        if self.binding_domain is not None:
+            if (self.grid_domain is None or not self.binding_domain or
+                len(set(self.binding_domain)) != len(self.binding_domain) or
+                any(p not in ('identity', 'slot_major') for p in self.binding_domain) or
+                acc0.binding_policy not in self.binding_domain):
+                raise ValueError("binding domain 或初始 policy 不合法")
         if fixed_hardware:
             if (type(iter) is not int or iter <= 0 or type(epoch) is not int or epoch <= 0 or
                 type(proposal_budget) is not int or proposal_budget <= 0 or
@@ -72,6 +89,17 @@ class SimulateAnnealing_CIMACC_on_gli:
 
     def generate_new_acc(self, acc0):
         if self.fixed_hardware:
+            if self.grid_domain is not None:
+                # 對稱重抽含 self-loop；每維一次抽樣，不進入 area 或重試迴圈。
+                grid = self.grid_domain[int(random() * len(self.grid_domain))]
+                acc = deepcopy(acc0)
+                acc.macro_row, acc.macro_col = grid
+                acc.AL = acc.cim.single_macro_al * acc.macro_col
+                acc.PC = acc.cim.single_macro_pc * acc.macro_row
+                if self.binding_domain is not None:
+                    acc.binding_policy = self.binding_domain[int(random() * len(self.binding_domain))]
+                    acc.binding = (list(range(8)) if acc.binding_policy == 'identity' else [0, 2, 4, 6, 1, 3, 5, 7])
+                return acc
             return acc0
         from evacim import area_modeling
         while True:
@@ -167,6 +195,12 @@ class SimulateAnnealing_CIMACC_on_gli:
         if self.event_sink:
             self.event_sink(deepcopy(dict(event=event, **fields)))
 
+    def _mapping_fields(self, acc):
+        if self.grid_domain is None:
+            return {}
+        return dict(mapping=dict(grid=[acc.macro_row, acc.macro_col], binding_policy=acc.binding_policy,
+            binding=deepcopy(acc.binding), deployment_source=acc.deployment_source))
+
     def _evaluate_fixed(self, acc, gli, dataflow):
         try:
             score, record = self.func(acc0=acc, gli=gli, dataflow=dataflow)
@@ -184,7 +218,9 @@ class SimulateAnnealing_CIMACC_on_gli:
             if record.get('totalMeasuredCycles') != score:
                 raise ValueError("callback 分數與實測 cycles 不一致")
             result = deepcopy(dict(acc=acc.backend_config, gli=gli, dataflow=dataflow,
-                                   cycles=score, evaluation=record))
+                                   cycles=score, evaluation=record, **self._mapping_fields(acc)))
+            if self.grid_domain is not None and record.get('mapping') != result['mapping']:
+                raise ValueError("callback mapping 與原候選不符")
             if len(gli) == 3:
                 if record.get('operand_role') != gli[2]:
                     raise ValueError("callback operand role 與原候選不符")
@@ -235,6 +271,7 @@ class SimulateAnnealing_CIMACC_on_gli:
                     self.proposals += 1
                     self._emit('proposal', ordinal=self.proposals, chain=i, current=before,
                         acc=acc_new.backend_config, gli=gli_new, dataflow=dataflow_new,
+                        **self._mapping_fields(acc_new),
                         methods=['generate_new_acc', 'generate_new_gli', 'generate_new_dataflow'],
                         rng_before=rng_before, rng_after=getstate())
                     new = self._evaluate_fixed(acc_new, gli_new, dataflow_new)
