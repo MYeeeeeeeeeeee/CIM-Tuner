@@ -1,4 +1,3 @@
-from evacim import sim
 from random import random
 import numpy as np
 import argparse
@@ -6,7 +5,20 @@ import argparse
 from evacim import cim_acc_config as ccfg
 from evacim import nn_config as ncfg
 
-def func_model(acc0, model, opt_target, verbose = False):
+def func_model(acc0, model, opt_target, verbose = False, backend_evaluator=None):
+    if backend_evaluator is not None:
+        if opt_target != 'backend_cycles': raise ValueError('backend model只接受正cycles目標')
+        records, choices, total = [], [], 0
+        for dims, count in zip(model.gli_list_rdc, model.gli_cnt):
+            gli = ('proj', tuple(int(x) for x in dims), 'NR')
+            record, choice = block_decision(acc0, gli, opt_target, backend_evaluator=backend_evaluator)
+            records.append(dict(dimensions=list(gli[1]), count=int(count), result=record, choice=choice))
+            if record['status'] != 'passed':
+                return None, choices, dict(status=record['status'], reason=record['reason'], shape_results=records)
+            choices.append(choice)
+            total += int(count)*record['totalMeasuredCycles']
+        return total, choices, dict(status='passed', functional_pass=True, model_cycles=total, shape_results=records,
+            grid=[acc0.macro_row, acc0.macro_col], binding=list(acc0.binding))
     num_ind_layer = len(model.gli_list_rdc)
     m_layer_rec = [[] for i in range(num_ind_layer)]
     df_rec = [[] for i in range(num_ind_layer)]
@@ -71,7 +83,27 @@ def func_model_fix_dataflow(acc0, model, opt_target):
         return - total_op/total_energy, df_rec, area
 
 
-def block_decision(acc0, gli, opt_target='ee_L2', fix=False):
+def block_decision(acc0, gli, opt_target='ee_L2', fix=False, backend_evaluator=None):
+    if backend_evaluator is not None:
+        if opt_target != 'backend_cycles' or fix: raise ValueError('backend block設定不合法')
+        best, best_choice, attempts = None, None, []
+        for role in ('NR', 'R'):
+            view = gli[1] if role == 'NR' else (gli[1][2], gli[1][1], gli[1][0])
+            for df in ('isap', 'ispp', 'wsap', 'wspp'):
+                score, result = backend_evaluator(acc0, ('proj', view, role), df)
+                attempts.append(result)
+                if result.get('status') == 'failed': return dict(result, attempts=attempts), None
+                if result.get('status') == 'rejected':
+                    if score is not None: raise ValueError('非法block有分數')
+                    continue
+                if (result.get('status') != 'passed' or type(score) is not int or score <= 0 or
+                    result.get('functional_pass') is not True or result.get('totalMeasuredCycles') != score):
+                    raise ValueError('backend block成功契約不符')
+                if best is None or score < best['totalMeasuredCycles']:
+                    best, best_choice = result, dict(role=role, dataflow=df, evaluation_id=result['evaluation_id'])
+        if best is None: return dict(status='rejected', reason='必要shape沒有合法mapping', attempts=attempts), None
+        return dict(best, attempts=attempts), best_choice
+    from evacim import sim
     if fix == True:
         m_rec = [[] for i in range(4)]
         dataflow = ['isap','wsap','r_isap','r_wsap']
@@ -111,6 +143,7 @@ def block_decision(acc0, gli, opt_target='ee_L2', fix=False):
 
 
 def func_cima(acc0, gli, dataflow):
+    from evacim import sim
     m = sim.evaluate(acc0, gli, dataflow)
     return -m['throughput'], m['area'][7]*1e-6
 

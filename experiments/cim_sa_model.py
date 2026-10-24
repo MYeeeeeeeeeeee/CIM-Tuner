@@ -1,15 +1,15 @@
 import math as m
-from random import random, seed
-import matplotlib.pyplot as plt
+from random import random, seed, getstate
+from copy import deepcopy
 from evacim import cim_acc_config as ccfg
 from evacim import nn_config as ncfg
-from evacim import area_modeling
 
 from evacim.sw_func import get_random_bool, func_cima, func_model, func_model_fix_dataflow
 
 
 class SimulateAnnealing_CIMACC_on_model:
-    def __init__(self, func, acc0, model, opt_target, area_const=5e6, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1):
+    def __init__(self, func, acc0, model, opt_target, area_const=5e6, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1,
+                 fixed_hardware=False, grid_domain=None, proposal_budget=2, event_sink=None):
         """
         Annealing parameters
         :param iter: Number of internal cycles
@@ -41,8 +41,25 @@ class SimulateAnnealing_CIMACC_on_model:
             'os_size_pow': 1
         }
         self.history = {'f': [], 'T': [], 'c': []}
+        self.fixed_hardware = fixed_hardware
+        if fixed_hardware:
+            domain = ((2, 4), (4, 2)) if grid_domain is None else tuple(map(tuple, grid_domain))
+            if (opt_target != 'backend_cycles' or not domain or len(set(domain)) != len(domain) or
+                any(g not in ((2, 4), (4, 2)) for g in domain) or
+                type(proposal_budget) is not int or proposal_budget < 1 or iter != 1 or
+                not 0 < alpha < 1 or not 0 < Tf < T0 or type(epoch) is not int or epoch < 1):
+                raise ValueError('限定 model 搜尋的候選域／退火設定不合法')
+            self.grid_domain = domain
+            self.proposal_budget, self.event_sink = proposal_budget, event_sink
+            self.proposals = 0
+            self.current, self.best, self.reference_cycles, self.failure = None, None, None, None
+            self.accs = [deepcopy(acc0)]
 
     def generate_new_acc(self, acc0):
+        if self.fixed_hardware:
+            grid = self.grid_domain[min(int(random()*len(self.grid_domain)), len(self.grid_domain)-1)]
+            return ccfg.CIMACC.from_backend_config(deepcopy(acc0.backend_config), grid=grid, binding_policy='identity')
+        from evacim import area_modeling
         while True:
             macro_row_new = acc0.macro_row + get_random_bool()*self.delta['macro_row']
             macro_col_new = acc0.macro_col + get_random_bool()*self.delta['macro_col']
@@ -66,16 +83,21 @@ class SimulateAnnealing_CIMACC_on_model:
         return acc_new
 
     def Metrospolis(self, f, f_new):
+        self.last_decision = dict(probability=1.0, random=None)
         if f_new <= f:
             return 1
         else:
             p = m.exp((f - f_new) * self.ms_ratio / self.T)
-            if random() < p:
+            draw = random()
+            self.last_decision = dict(probability=p, random=draw)
+            if draw < p:
                 return 1
             else:
                 return 0
 
     def get_optimal(self):
+        if self.fixed_hardware:
+            return (self.best['cycles'], deepcopy(self.best['evaluation']), 0) if self.best else (None, None, None)
         f_list = []
         area_list = []
         for i in range(self.iter):
@@ -87,6 +109,7 @@ class SimulateAnnealing_CIMACC_on_model:
         return - f_best, area_list[idx], idx
 
     def plot(self, xlim=None, ylim=None):
+        import matplotlib.pyplot as plt
         plt.plot(self.history['c'], self.history['f'])
         plt.title('Simulate Annealing')
         # plt.xlabel('Temperature')
@@ -100,12 +123,73 @@ class SimulateAnnealing_CIMACC_on_model:
         plt.show()
         plt.savefig("./plot/sa_model.png")
 
+    def _emit(self, event, **fields):
+        if self.event_sink:
+            self.event_sink(deepcopy(dict(event=event, **fields)))
+
+    def _evaluate_fixed(self, acc):
+        try:
+            score, choices, record = self.func(acc0=acc, model=self.model, opt_target=self.opt_target)
+            if not isinstance(record, dict) or record.get('status') not in ('passed', 'rejected', 'failed'):
+                raise ValueError('model callback狀態不完整')
+            if record['status'] != 'passed':
+                if score is not None or not record.get('reason'):
+                    raise ValueError('model拒絕／失敗不得有分數或缺原因')
+                if record['status'] == 'failed': self.failure = record['reason']
+                self._emit('evaluation', evaluation=record)
+                return None
+            if (type(score) is not int or score <= 0 or record.get('functional_pass') is not True or
+                record.get('model_cycles') != score or not choices):
+                raise ValueError('model callback缺少正實測總分／完整choices')
+            item = dict(cycles=score, grid=[acc.macro_row, acc.macro_col], binding=deepcopy(acc.binding),
+                        choices=deepcopy(choices), evaluation=deepcopy(record))
+            if record.get('grid') != item['grid'] or record.get('binding') != item['binding']:
+                raise ValueError('model callback與proposal部署不符')
+            if self.reference_cycles is None:
+                self.reference_cycles = score
+                self.ms_ratio = 1.0/score
+            if self.best is None or score < self.best['cycles']: self.best = deepcopy(item)
+            self._emit('evaluation', result=item)
+            return item
+        except Exception as error:
+            self.failure = str(error) or type(error).__name__
+            self._emit('failure', reason=self.failure)
+            return None
+
+    def _result(self, reason):
+        return dict(status='incomplete' if self.failure or self.best is None else 'complete',
+            reason=self.failure or (reason if self.best else 'no_valid_solution'),
+            best=None if self.failure else deepcopy(self.best), best_observed=deepcopy(self.best),
+            current=deepcopy(self.current), proposals=self.proposals, reference_cycles=self.reference_cycles,
+            history=deepcopy(self.history))
+
     def run(self, write_log = False, logname = "res.log"):
         count = 0
+        if self.fixed_hardware:
+            self.current = self._evaluate_fixed(self.accs[0])
+            if self.failure: return self._result('initial_failure')
         # annealing
         while self.epoch != 0:
             # iteration
             for i in range(self.iter):
+                if self.fixed_hardware:
+                    if self.proposals >= self.proposal_budget: return self._result('proposal_budget')
+                    before, best_before = deepcopy(self.current), deepcopy(self.best)
+                    rng_before = getstate()
+                    acc_new = self.generate_new_acc(self.accs[i])
+                    self.proposals += 1
+                    self._emit('proposal', ordinal=self.proposals, method='generate_new_acc',
+                        grid=[acc_new.macro_row, acc_new.macro_col], binding=acc_new.binding,
+                        backend_config=acc_new.backend_config, rng_before=rng_before, rng_after=getstate(), current=before)
+                    new = self._evaluate_fixed(acc_new)
+                    if self.failure: return self._result('execution_failure')
+                    self.last_decision = dict(probability=None, random=None)
+                    accepted = new is not None and (before is None or bool(self.Metrospolis(before['cycles'], new['cycles'])))
+                    if accepted: self.current, self.accs[i] = new, acc_new
+                    self._emit('decision', ordinal=self.proposals, temperature=self.T, reference_cycles=self.reference_cycles,
+                        before=before, proposal=new, accepted=accepted, after=self.current,
+                        best_before=best_before, best_after=self.best, **self.last_decision)
+                    continue
                 f, _, _ = self.func(acc0 = self.accs[i], model = self.model, opt_target = self.opt_target)
                 acc_new = self.generate_new_acc(self.accs[i])
                 f_new, _, _ = self.func(acc0 = acc_new, model = self.model, opt_target = self.opt_target)
@@ -116,7 +200,8 @@ class SimulateAnnealing_CIMACC_on_model:
             self.history['f'].append(ft)
             self.history['T'].append(self.T)
             self.history['c'].append(count)
-            print(ft, self.T,'\tidx:',idx, self.accs[idx].macro_row, self.accs[idx].macro_col, self.accs[idx].SCR, self.accs[idx].is_size, self.accs[idx].os_size, flush=True)
+            if not self.fixed_hardware:
+                print(ft, self.T,'\tidx:',idx, self.accs[idx].macro_row, self.accs[idx].macro_col, self.accs[idx].SCR, self.accs[idx].is_size, self.accs[idx].os_size, flush=True)
             # cooling
             self.T = self.T * self.alpha
             count += 1
@@ -124,6 +209,7 @@ class SimulateAnnealing_CIMACC_on_model:
                 self.epoch -= 1
                 self.T = self.T0 
         # get optimal solution
+        if self.fixed_hardware: return self._result('temperature')
         f_best, area, idx = self.get_optimal()
         self.accs[idx].printf()
         if write_log: 
