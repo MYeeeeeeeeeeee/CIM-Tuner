@@ -20,7 +20,8 @@ def get_random_bool():
 class SimulateAnnealing_CIMACC_on_gli:
     def __init__(self, func, acc0, gli, dataflow, iter=5, T0=100, Tf=1e-8, alpha=0.99, epoch=1, input_weight_switch_enable=True,input_weight_scheduling_enable = True, weight_tiling_enable = True,
                  fixed_hardware=False, proposal_budget=8, event_sink=None,
-                 grid_domain=None, binding_domain=None):
+                 grid_domain=None, binding_domain=None, dataflow_domain=None,
+                 selected_cost_constraints=False):
         """
         Annealing parameters
         :param iter: Number of internal cycles
@@ -61,6 +62,21 @@ class SimulateAnnealing_CIMACC_on_gli:
         self.proposals = 0
         self.failure = None
         self.reference_cycles = None
+        self.selected_cost_constraints = selected_cost_constraints
+        self.dataflow_domain = None if dataflow_domain is None else tuple(dataflow_domain)
+        self.best_candidates = []
+        if self.dataflow_domain is not None:
+            if (not fixed_hardware or not self.dataflow_domain or
+                len(set(self.dataflow_domain)) != len(self.dataflow_domain) or
+                any(df not in ('wsap', 'wspp', 'isap', 'ispp') for df in self.dataflow_domain) or
+                dataflow not in self.dataflow_domain):
+                raise ValueError('固定模式的 dataflow domain 不合法')
+        if selected_cost_constraints and (not fixed_hardware or iter != 1 or
+                self.dataflow_domain != ('wsap', 'wspp', 'isap') or input_weight_switch_enable or
+                grid_domain is not None or binding_domain is not None or
+                gli != ('proj', (7, 9, 5)) or
+                (acc0.macro_row, acc0.macro_col, acc0.placement) != (2, 4, 'NR')):
+            raise ValueError('選定成本模式僅接受 F7／三策略及固定部署')
         self.grid_domain = None if grid_domain is None else tuple(tuple(g) for g in grid_domain)
         self.binding_domain = None if binding_domain is None else tuple(binding_domain)
         if self.grid_domain is not None:
@@ -135,6 +151,9 @@ class SimulateAnnealing_CIMACC_on_gli:
             return gli
 
     def generate_new_dataflow(self, dataflow):
+        if self.dataflow_domain is not None:
+            # 原版 generator 直接抽樣含 self-loop 的合法 domain，不重試或替換 proposal。
+            return self.dataflow_domain[int(random()*len(self.dataflow_domain))]
         if self.df_var[1] and not self.df_var[2]:
             if random()>0.5: return 'is'+dataflow[2:]
             else: return 'ws'+dataflow[2:]
@@ -207,6 +226,10 @@ class SimulateAnnealing_CIMACC_on_gli:
             if not isinstance(record, dict) or record.get('status') not in ('passed', 'rejected', 'failed'):
                 raise ValueError("callback 回傳狀態不完整")
             if record['status'] != 'passed':
+                if self.selected_cost_constraints and record.get('classification') not in (
+                        ('mapping_invalid', 'mapping_unsupported', 'power_exceeded') if record['status'] == 'rejected'
+                        else ('execution_failed', 'functional_failed', 'cost_failed')):
+                    raise ValueError('成本模式拒絕／失敗分類不完整')
                 if score is not None or not record.get('reason'):
                     raise ValueError("拒絕／失敗不得回傳分數或省略原因")
                 if record['status'] == 'failed':
@@ -217,6 +240,9 @@ class SimulateAnnealing_CIMACC_on_gli:
                 raise ValueError("成功評估必須包含正整數 cycles 與 golden 通過")
             if record.get('totalMeasuredCycles') != score:
                 raise ValueError("callback 分數與實測 cycles 不一致")
+            if self.selected_cost_constraints and (record.get('classification') != 'feasible' or
+                    record.get('constraints', {}).get('feasible') is not True):
+                raise ValueError('成本模式的有效分數必須明示符合約束')
             result = deepcopy(dict(acc=acc.backend_config, gli=gli, dataflow=dataflow,
                                    cycles=score, evaluation=record, **self._mapping_fields(acc)))
             if self.grid_domain is not None and record.get('mapping') != result['mapping']:
@@ -230,6 +256,12 @@ class SimulateAnnealing_CIMACC_on_gli:
                 self.ms_ratio = 1.0 / score
             if self.best is None or score < self.best['cycles']:
                 self.best = deepcopy(result)
+                if self.selected_cost_constraints:
+                    self.best_candidates = [deepcopy(result)]
+            elif self.selected_cost_constraints and score == self.best['cycles']:
+                # 本模式固定全部硬體及 gli，dataflow 即不同 mapping 的身分。
+                if not any(item['dataflow'] == dataflow for item in self.best_candidates):
+                    self.best_candidates.append(deepcopy(result))
             self._emit('evaluation', result=result)
             return result
         except Exception as error:
@@ -238,6 +270,13 @@ class SimulateAnnealing_CIMACC_on_gli:
             return None
 
     def _fixed_result(self, stop_reason):
+        if self.selected_cost_constraints:
+            return dict(status='incomplete' if self.failure else 'complete',
+                reason=self.failure or (stop_reason if self.best else 'no_feasible_found_within_budget'),
+                stop_reason=stop_reason, best=None if self.failure else deepcopy(self.best),
+                best_candidates=[] if self.failure else deepcopy(self.best_candidates),
+                best_observed=deepcopy(self.best), current=deepcopy(self.current),
+                proposals=self.proposals, reference_cycles=self.reference_cycles, history=deepcopy(self.history))
         reason = self.failure or (stop_reason if self.best else 'no_valid_solution')
         return dict(status='incomplete' if self.failure or self.best is None else 'complete',
                     reason=reason, best=None if self.failure else deepcopy(self.best),
