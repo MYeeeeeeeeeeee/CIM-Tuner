@@ -71,12 +71,16 @@ class SimulateAnnealing_CIMACC_on_gli:
                 any(df not in ('wsap', 'wspp', 'isap', 'ispp') for df in self.dataflow_domain) or
                 dataflow not in self.dataflow_domain):
                 raise ValueError('固定模式的 dataflow domain 不合法')
+        legacy_cost_domain = (self.dataflow_domain == ('wsap', 'wspp', 'isap') and
+                              not input_weight_switch_enable and gli == ('proj', (7, 9, 5)))
+        self.eight_strategy_costs = (selected_cost_constraints and
+            self.dataflow_domain == ('wsap', 'wspp', 'isap', 'ispp') and
+            input_weight_switch_enable and gli == ('proj', (7, 9, 5), 'NR'))
         if selected_cost_constraints and (not fixed_hardware or iter != 1 or
-                self.dataflow_domain != ('wsap', 'wspp', 'isap') or input_weight_switch_enable or
+                not (legacy_cost_domain or self.eight_strategy_costs) or
                 grid_domain is not None or binding_domain is not None or
-                gli != ('proj', (7, 9, 5)) or
                 (acc0.macro_row, acc0.macro_col, acc0.placement) != (2, 4, 'NR')):
-            raise ValueError('選定成本模式僅接受 F7／三策略及固定部署')
+            raise ValueError('選定成本模式僅接受 F7／既有三策略或明確八策略及固定部署')
         self.grid_domain = None if grid_domain is None else tuple(tuple(g) for g in grid_domain)
         self.binding_domain = None if binding_domain is None else tuple(binding_domain)
         if self.grid_domain is not None:
@@ -259,8 +263,10 @@ class SimulateAnnealing_CIMACC_on_gli:
                 if self.selected_cost_constraints:
                     self.best_candidates = [deepcopy(result)]
             elif self.selected_cost_constraints and score == self.best['cycles']:
-                # 本模式固定全部硬體及 gli，dataflow 即不同 mapping 的身分。
-                if not any(item['dataflow'] == dataflow for item in self.best_candidates):
+                # 固定部署下 role 與 dataflow 共同辨識策略；代表保留首次觀察者。
+                identity = (result.get('operand_role', 'NR'), dataflow)
+                if not any((item.get('operand_role', 'NR'), item['dataflow']) == identity
+                           for item in self.best_candidates):
                     self.best_candidates.append(deepcopy(result))
             self._emit('evaluation', result=result)
             return result
@@ -310,11 +316,19 @@ class SimulateAnnealing_CIMACC_on_gli:
                     self.proposals += 1
                     self._emit('proposal', ordinal=self.proposals, chain=i, current=before,
                         acc=acc_new.backend_config, gli=gli_new, dataflow=dataflow_new,
+                        **(dict(source_state=dict(acc=self.accs[i].backend_config,
+                            gli=self.glis[i], dataflow=self.dataflows[i])) if self.eight_strategy_costs else {}),
                         **self._mapping_fields(acc_new),
                         methods=['generate_new_acc', 'generate_new_gli', 'generate_new_dataflow'],
                         rng_before=rng_before, rng_after=getstate())
                     new = self._evaluate_fixed(acc_new, gli_new, dataflow_new)
                     if self.failure:
+                        if self.eight_strategy_costs:
+                            self._emit('decision', ordinal=self.proposals, chain=i, temperature=self.T,
+                                reference_cycles=self.reference_cycles, before=before, proposal=None,
+                                accepted=False, after=self.current[i], best_before=best_before,
+                                best_after=self.best, probability=None, random=None,
+                                reason='evaluation_failed', failure=self.failure)
                         return self._fixed_result('execution_failure')
                     accepted = False
                     self.last_decision = {'probability': None, 'random': None}
@@ -325,7 +339,11 @@ class SimulateAnnealing_CIMACC_on_gli:
                     self._emit('decision', ordinal=self.proposals, chain=i, temperature=self.T,
                         reference_cycles=self.reference_cycles, before=before, proposal=new,
                         accepted=accepted, after=self.current[i], best_before=best_before,
-                        best_after=self.best, **self.last_decision)
+                        best_after=self.best, **self.last_decision,
+                        **(dict(reason=('candidate_rejected' if new is None else
+                            'first_feasible' if f is None else 'non_increasing_cycles' if new['cycles'] <= f else
+                            'metropolis_accepted' if accepted else 'metropolis_rejected'))
+                            if self.eight_strategy_costs else {}))
                 else:
                     f_new, _ = self.func(acc0 = acc_new, gli = gli_new, dataflow = dataflow_new)
                     accepted = self.Metrospolis(f, f_new)
