@@ -7,6 +7,7 @@
 #include "inst_stack.h"
 #include "tensor_stack.h"
 #include "instruction_count.h"
+#include "target_config.h"
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 #define WRITE_INST 0
@@ -20,6 +21,8 @@ char* data_stream;
 hwc acc0;
 Config config;
 InstructionCount instructionCount;
+static int target_mode = 0;
+static TargetConfig target;
 
 int weight_map_channel, weight_map_length;
 int input_map_length, input_map_channel;
@@ -62,6 +65,33 @@ void lhd_process(void);
 void a2a_process(void);
 
 int main(int argc, char *argv[]){
+    if (argc > 1 && !strncmp(argv[1], "--", 2)) {
+        if (strcmp(argv[1], "--target-f7")) {
+            fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
+            return 2;
+        }
+        int result = target_parse(argc - 2, argv + 2, &target);
+        if (result) return result;
+        target_mode = 1;
+        /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */
+        config.AL = (int)(target.logicalRows * target.gridCols);
+        config.PC = (int)(target.logicalCols * target.gridRows);
+        config.SCR = (int)target.macroStorageSets;
+        acc0.LocalSwitchrows = config.SCR;
+        data_stream = "wsap";
+        proj_process((int)target.n, (int)target.k, (int)target.m);
+        result = target_diagnose(&target, acc_times, para_times,
+            weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix);
+        for (int i = 0; i < para_times; ++i) {
+            free(ls_matrix[i]);
+            free(atos_matrix[i]);
+        }
+        free(ls_matrix);
+        free(atos_matrix);
+        free(weight_update_ls);
+        free(IS_load_rows);
+        return result;
+    }
     if (argc != 13) {
         printf("error!");
         return 1;
@@ -981,21 +1011,25 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     input_map_length = b;
     input_map_channel = c;
 
-    input_data_per_row = floor(acc0.InputSRAMWidth / config.DATA_WIDTH);
-    rows_per_input_channel = (int)ceil((float)input_map_length / input_data_per_row);
-    input_channels_per_ISload = acc0.InputSRAMDepth / rows_per_input_channel;
-    if (input_channels_per_ISload > input_map_channel)
-        input_channels_per_ISload = input_map_channel;
-    if (input_channels_per_ISload == 0)
-        IS_load_times_per_inst = 0;
-    else{
-        IS_load_times_per_inst = (int)ceil((float)input_map_channel / input_channels_per_ISload);
-        IS_load_rows = (int*)malloc(IS_load_times_per_inst * sizeof(int));
-        for (int i = 0; i < IS_load_times_per_inst; ++i) {
-            IS_load_rows[i] = input_channels_per_ISload * rows_per_input_channel;
-        }
-        if (input_map_channel % input_channels_per_ISload != 0) {
-            IS_load_rows[IS_load_times_per_inst - 1] = (input_map_channel % input_channels_per_ISload) * rows_per_input_channel;
+    if (target_mode) {
+        input_channels_per_ISload = (int)target_cache_vectors(&target);
+    } else {
+        input_data_per_row = floor(acc0.InputSRAMWidth / config.DATA_WIDTH);
+        rows_per_input_channel = (int)ceil((float)input_map_length / input_data_per_row);
+        input_channels_per_ISload = acc0.InputSRAMDepth / rows_per_input_channel;
+        if (input_channels_per_ISload > input_map_channel)
+            input_channels_per_ISload = input_map_channel;
+        if (input_channels_per_ISload == 0)
+            IS_load_times_per_inst = 0;
+        else{
+            IS_load_times_per_inst = (int)ceil((float)input_map_channel / input_channels_per_ISload);
+            IS_load_rows = (int*)malloc(IS_load_times_per_inst * sizeof(int));
+            for (int i = 0; i < IS_load_times_per_inst; ++i) {
+                IS_load_rows[i] = input_channels_per_ISload * rows_per_input_channel;
+            }
+            if (input_map_channel % input_channels_per_ISload != 0) {
+                IS_load_rows[IS_load_times_per_inst - 1] = (input_map_channel % input_channels_per_ISload) * rows_per_input_channel;
+            }
         }
     }
 
@@ -1023,11 +1057,13 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     para_times = weight_block_row;
     acc_times = weight_block_col;
 
-    weight_map_channel = para_times * config.PC;
-    weight_map_length = acc_times * config.AL;
+    if (!target_mode) {
+        weight_map_channel = para_times * config.PC;
+        weight_map_length = acc_times * config.AL;
 
-    input_map_length  = acc_times * config.AL;
-    input_map_channel = input_map_channel;
+        input_map_length  = acc_times * config.AL;
+        input_map_channel = input_map_channel;
+    }
 
     // 分配ls_matrix并初始化为0
     ls_matrix = (int**)malloc(para_times * sizeof(int*));
@@ -1082,6 +1118,9 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
             }
         }
     }
+
+    /* A2a 到配置／AF-SCR 檢查為止，不進入原 bus 發射或匯出操作。 */
+    if (target_mode) return;
 
     // // 打印基本计算结果
     // printf("input_data_per_row = %d\n", input_data_per_row);
