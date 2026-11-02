@@ -125,8 +125,8 @@ int target_line_operations(uint64_t bytes, uint64_t width, uint64_t *operations)
     return 1;
 }
 
-int target_diagnose(const TargetConfig *t, int a, int p, int batches,
-                    const int *batch_sizes, int **sets, int **atos)
+static int target_report(const TargetConfig *t, int a, int p, int batches,
+                    const int *batch_sizes, int **sets, int **atos, int emit)
 {
     const uint64_t al = t->logicalRows * t->gridCols;
     const uint64_t pc = t->logicalCols * t->gridRows;
@@ -174,6 +174,7 @@ int target_diagnose(const TargetConfig *t, int a, int p, int batches,
         !target_line_operations(1, t->tileInterconnectBytesPerCycle, &link))
         return reject("尾端診斷失敗", "indices");
 
+    if (!emit) return 0;
     printf("{\"status\":\"passed\",\"mode\":\"target-f7\",\"config\":{");
 #define PRINT_NUMBER(name, expected) printf("\"" #name "\":%" PRIu64 ",", t->name);
     TARGET_F7_NUMBERS(PRINT_NUMBER)
@@ -212,4 +213,16 @@ int target_diagnose(const TargetConfig *t, int a, int p, int batches,
            "\"legacyISDepth\":null,\"legacyOSDepth\":null,\"legacyBusWidth\":null}\n",
            gb, pe, t->tileInterconnectStartupCycles + link);
     return 0;
+}
+
+int target_validate(const TargetConfig *t, int a, int p, int batches,
+                    const int *sizes, int **sets, int **atos)
+{
+    return target_report(t, a, p, batches, sizes, sets, atos, 0);
+}
+
+int target_diagnose(const TargetConfig *t, int a, int p, int batches,
+                    const int *sizes, int **sets, int **atos)
+{
+    return target_report(t, a, p, batches, sizes, sets, atos, 1);
 }

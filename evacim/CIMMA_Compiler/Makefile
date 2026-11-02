@@ -5,7 +5,7 @@ CC=gcc
 CFLAGS=-fdiagnostics-color=always -g -Wall
 
 # Source files
-SOURCES=compiler_count.c hw_config.c instruction_count.c inst_stack.c tensor_stack.c target_config.c
+SOURCES=compiler_count.c hw_config.c instruction_count.c inst_stack.c tensor_stack.c target_config.c target_schedule.c
 
 # Object files
 OBJECTS=$(SOURCES:.c=.o)

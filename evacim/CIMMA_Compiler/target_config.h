@@ -36,6 +36,8 @@ int target_w_index(const TargetConfig *, uint64_t k, uint64_t n,
 int target_fragment(const TargetConfig *, uint64_t p, uint64_t a,
                     uint64_t row, uint64_t col, uint64_t *rows, uint64_t *cols);
 int target_line_operations(uint64_t bytes, uint64_t width, uint64_t *operations);
+int target_validate(const TargetConfig *, int a, int p, int batches,
+                    const int *batch_sizes, int **sets, int **atos);
 int target_diagnose(const TargetConfig *, int a, int p, int batches,
                     const int *batch_sizes, int **sets, int **atos);
 

@@ -8,6 +8,7 @@
 #include "tensor_stack.h"
 #include "instruction_count.h"
 #include "target_config.h"
+#include "target_schedule.h"
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 #define WRITE_INST 0
@@ -22,6 +23,7 @@ hwc acc0;
 Config config;
 InstructionCount instructionCount;
 static int target_mode = 0;
+static int target_export = 0;
 static TargetConfig target;
 
 int weight_map_channel, weight_map_length;
@@ -53,8 +55,8 @@ void idle(void);
 int load_is_narrow_bus(int num_rows, int input_map_position);
 int load_is_wide_bus(int num_rows, int input_map_position);
 int load_is_block(int num_rows, int input_map_position);
-int wu_ls_narrow_bus(int num_ls, int num_channel, int i_block);
-int wu_ls_wide_bus(int num_ls, int num_channel, int i_block);
+void wu_ls_narrow_bus(int i_ls, int num_channel, int i_pt, int i_at);
+void wu_ls_wide_bus(int i_ls, int num_channel, int i_pt, int i_at);
 int wu_ls_bank(int num_ls, int num_channel, int i_block);
 void compute(int i_input_channel, int computing_block, int fussion_flag);
 void is_process(void);
@@ -66,13 +68,15 @@ void a2a_process(void);
 
 int main(int argc, char *argv[]){
     if (argc > 1 && !strncmp(argv[1], "--", 2)) {
-        if (strcmp(argv[1], "--target-f7")) {
+        if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export")) {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
         int result = target_parse(argc - 2, argv + 2, &target);
         if (result) return result;
         target_mode = 1;
+        target_export = !strcmp(argv[1], "--target-f7-export");
+        if (target_export) schedule_begin(&target);
         /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */
         config.AL = (int)(target.logicalRows * target.gridCols);
         config.PC = (int)(target.logicalCols * target.gridRows);
@@ -80,8 +84,14 @@ int main(int argc, char *argv[]){
         acc0.LocalSwitchrows = config.SCR;
         data_stream = "wsap";
         proj_process((int)target.n, (int)target.k, (int)target.m);
-        result = target_diagnose(&target, acc_times, para_times,
+        result = target_export ? target_validate(&target, acc_times, para_times,
+            weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix) :
+            target_diagnose(&target, acc_times, para_times,
             weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix);
+        if (target_export && !result) {
+            ws_process();
+            result = schedule_write();
+        }
         for (int i = 0; i < para_times; ++i) {
             free(ls_matrix[i]);
             free(atos_matrix[i]);
@@ -292,17 +302,19 @@ int load_is_block(int num_rows, int input_map_position){
     }
 }
 
-int wu_ls_narrow_bus(int num_ls, int num_channel, int i_block) {
-    for (int i_ls = 0; i_ls < num_ls; ++i_ls) {
-        int i_pt, i_at;
-        if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
-            i_pt = i_block / weight_block_col;
-            i_at = i_block % weight_block_col;
-        } else if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "wspp") == 0) {
-            i_pt = i_block % weight_block_row;
-            i_at = i_block / weight_block_row;
-        }
+/* 共用原 AF／PF 的 block 座標決策；不建立另一套策略。 */
+static void block_coordinates(int block, int *p, int *a)
+{
+    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
+        *p = block / weight_block_col;
+        *a = block % weight_block_col;
+    } else {
+        *p = block % weight_block_row;
+        *a = block / weight_block_row;
+    }
+}
 
+void wu_ls_narrow_bus(int i_ls, int num_channel, int i_pt, int i_at) {
         for (int j_channel = 0; j_channel < num_channel; j_channel++) {
             int i_weight_channel = i_pt * config.PC + j_channel;
             int j_data_in_channel = i_at * config.AL;
@@ -338,22 +350,10 @@ int wu_ls_narrow_bus(int num_ls, int num_channel, int i_block) {
                 }
             }
         }
-        i_block += 1;
-    }
-    return i_block;
 }
 
-int wu_ls_wide_bus(int num_ls, int num_channel, int i_block) {
-    for (int i_ls = 0; i_ls < num_ls; ++i_ls) {
-        int i_pt, i_at;
-        if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
-            i_pt = i_block / weight_block_col;
-            i_at = i_block % weight_block_col;
-        } else if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "wspp") == 0) {
-            i_pt = i_block % weight_block_row;
-            i_at = i_block / weight_block_row;
-        }
-
+void wu_ls_wide_bus(int i_ls, int num_channel, int i_pt, int i_at) {
+    (void)i_ls;
         for (int j_channel = 0; j_channel < num_channel; j_channel++) {
             int i_weight_channel = i_pt * config.PC + j_channel;
             int j_data_in_channel = i_at * config.AL;
@@ -379,35 +379,51 @@ int wu_ls_wide_bus(int num_ls, int num_channel, int i_block) {
                 // }
             }
         }
-        i_block += 1;
-    }
-    return i_block;
 }
 
 int wu_ls_bank(int num_ls, int num_channel, int i_block){
-    bus_wu_width_ratio = config.BUS_WIDTH / config.CIMsWriteWidth;
-    if (bus_wu_width_ratio == 0) {
-        return wu_ls_narrow_bus(num_ls, num_channel, i_block);
-    } else {
-        return wu_ls_wide_bus(num_ls, num_channel, i_block);
+    if (!target_export) bus_wu_width_ratio = config.BUS_WIDTH / config.CIMsWriteWidth;
+    for (int i_ls = 0; i_ls < num_ls; ++i_ls) {
+        int i_pt, i_at;
+        block_coordinates(i_block, &i_pt, &i_at);
+        if (target_export) {
+            schedule_program(i_pt, i_at, i_ls, __func__, __LINE__); /* A2B_PROGRAM */
+        } else if (bus_wu_width_ratio == 0) {
+            wu_ls_narrow_bus(i_ls, num_channel, i_pt, i_at);
+        } else {
+            wu_ls_wide_bus(i_ls, num_channel, i_pt, i_at);
+        }
+        i_block += 1;
     }
+    return i_block;
 }
 
 void compute(int i_input_channel, int computing_block,int fussion_flag) {
     int i_ls = computing_block % config.SCR;
     int i_pt, i_at, is_addr, os_addr, input_map_position, j_reg;
     
-    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
-        i_pt = computing_block / weight_block_col;
-        i_at = computing_block % weight_block_col;
-    } else if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "wspp") == 0) {
-        i_pt = computing_block % weight_block_row;
-        i_at = computing_block / weight_block_row;
-    }
-    
+    block_coordinates(computing_block, &i_pt, &i_at);
+
     int atos_flag = atos_matrix[i_pt][i_at];
 
     os_addr = i_input_channel * para_times + i_pt;
+    const int direct_source = (strcmp(data_stream, "wsap") == 0 || strcmp(data_stream, "wspp") == 0) &&
+                              i_input_channel >= input_channels_per_ISload;
+    if (target_export) {
+        if (direct_source) {
+            schedule_read(i_input_channel, i_pt, i_at, 1, __func__, __LINE__); /* A2B_DIRECT */
+        } else {
+            schedule_read(i_input_channel, i_pt, i_at, 0, __func__, __LINE__); /* A2B_CACHED */
+        }
+        if (atos_flag == 0) {
+            schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
+                             __func__, __LINE__); /* A2B_AOR */
+        } else {
+            schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
+                             __func__, __LINE__); /* A2B_TOS */
+        }
+        return;
+    }
     // if (fussion_flag) os_addr = i_input_channel * Spv + (i_pt - Sqk) % Spv + ;
 
     if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "ispp") == 0) {
@@ -416,7 +432,7 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
         is_addr = i_input_channel * rows_per_input_channel + i_at;
     }
 
-    if ((strcmp(data_stream, "wsap") == 0 || strcmp(data_stream, "wspp") == 0) && (i_input_channel >= input_channels_per_ISload)) { // Cmpfgt & Cmpfgtp
+    if (direct_source) { // Cmpfgt & Cmpfgtp
     //  这里是bus wide的情况
         if (bus_is_width_ratio >= 1){
             input_map_position = i_input_channel * input_map_length + i_at * config.AL;
@@ -984,12 +1000,17 @@ void ws_process(void) {
     int i_block = 0;
 
     // 假设rows_per_input_channel和input_channels_per_ISload已经定义
-    load_is_block(rows_per_input_channel * input_channels_per_ISload, 0);
+    if (target_export) {
+        schedule_cache(input_channels_per_ISload, __func__, __LINE__); /* A2B_CACHE_FILL */
+    } else {
+        load_is_block(rows_per_input_channel * input_channels_per_ISload, 0);
+    }
 
     for (int i_weight_update = 0; i_weight_update < weight_update_times_per_inst; i_weight_update++) {
+        if (target_export) schedule_batch(i_weight_update, __func__, __LINE__); /* A2B_BATCH */
         wu_ls_bank(weight_update_ls[i_weight_update], config.PC, i_block);
 
-        for (int i = 0; i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
+        for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
             idle();
         }
 
@@ -1120,6 +1141,9 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     }
 
     /* A2a 到配置／AF-SCR 檢查為止，不進入原 bus 發射或匯出操作。 */
+    if (target_export)
+        schedule_tiling(acc_times, para_times, weight_update_times_per_inst,
+                        weight_update_ls, ls_matrix, atos_matrix, __func__, __LINE__); /* A2B_TILING */
     if (target_mode) return;
 
     // // 打印基本计算结果
