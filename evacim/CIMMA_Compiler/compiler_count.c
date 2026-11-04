@@ -68,21 +68,23 @@ void a2a_process(void);
 
 int main(int argc, char *argv[]){
     if (argc > 1 && !strncmp(argv[1], "--", 2)) {
-        if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export")) {
+        if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
+            strcmp(argv[1], "--target-f7-pf-export")) {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
-        int result = target_parse(argc - 2, argv + 2, &target);
+        int pf = !strcmp(argv[1], "--target-f7-pf-export");
+        int result = pf ? target_parse_pf(argc - 2, argv + 2, &target) : target_parse(argc - 2, argv + 2, &target);
         if (result) return result;
         target_mode = 1;
-        target_export = !strcmp(argv[1], "--target-f7-export");
+        target_export = pf || !strcmp(argv[1], "--target-f7-export");
         if (target_export) schedule_begin(&target);
         /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */
         config.AL = (int)(target.logicalRows * target.gridCols);
         config.PC = (int)(target.logicalCols * target.gridRows);
         config.SCR = (int)target.macroStorageSets;
         acc0.LocalSwitchrows = config.SCR;
-        data_stream = "wsap";
+        data_stream = pf ? "wspp" : "wsap";
         proj_process((int)target.n, (int)target.k, (int)target.m);
         result = target_export ? target_validate(&target, acc_times, para_times,
             weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix) :
@@ -418,6 +420,9 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
         if (atos_flag == 0) {
             schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
                              __func__, __LINE__); /* A2B_AOR */
+        } else if (atos_flag == 2) {
+            schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
+                             __func__, __LINE__); /* A2B_AOS */
         } else {
             schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
                              __func__, __LINE__); /* A2B_TOS */

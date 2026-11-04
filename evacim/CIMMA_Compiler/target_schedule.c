@@ -7,7 +7,7 @@
 enum { LIMIT = 64, FILL, PROGRAM, READ, COMPUTE };
 typedef struct {
     int id, kind, m, p, a, batch, set, version, k0, k1, n0, n1;
-    int direct, input, program, previous, overwrite, atos, owner;
+    int direct, input, program, previous, overwrite, atos, owner, final;
     int dependencies[LIMIT], dependencies_count;
     const char *function;
     int line;
@@ -18,6 +18,7 @@ static int blocks[4][2], sizes[2], a_count, p_count, batch_count, tiling_line;
 static const char *tiling_function;
 static const TargetConfig *configuration;
 static int batch_lines[2];
+static unsigned coverage[10];
 
 static Op *append(int kind, const char *function, int line)
 {
@@ -51,6 +52,7 @@ void schedule_begin(const TargetConfig *target)
     memset(ops, 0, sizeof(ops)); memset(current, 0, sizeof(current));
     memset(fills, 0, sizeof(fills)); memset(partial, 0, sizeof(partial));
     memset(batch_lines, 0, sizeof(batch_lines));
+    memset(coverage, 0, sizeof(coverage));
     count = failed = last_read = 0; batch = -1; configuration = target;
 }
 
@@ -116,6 +118,11 @@ void schedule_compute(int m, int p, int a, int set, int atos, int owner,
     o->input = last_read; o->program = current[set];
     if (!o->program) { failed = 1; return; }
     o->version = ops[o->program - 1].version; o->previous = partial[owner];
+    /* ATOS 保留來源編碼；完成取決於同 owner 的有效 K 聯集。 */
+    const unsigned contribution = ((1u << (o->k1 - o->k0)) - 1u) << o->k0;
+    if (coverage[owner] & contribution) failed = 1;
+    coverage[owner] |= contribution;
+    o->final = coverage[owner] == 511u;
     dependency(o, o->input); dependency(o, o->program); dependency(o, o->previous);
     partial[owner] = o->id;
 }
@@ -145,31 +152,47 @@ int schedule_write(void)
         return 2;
     }
     const TargetConfig *t = configuration;
-    printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":1,"
-           "\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{");
+    printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"
+           "\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{", t->pf_export ? 2 : 1);
 #define NUMBER(name, expected) printf("\"" #name "\":%" PRIu64 ",", t->name);
     TARGET_F7_NUMBERS(NUMBER)
 #undef NUMBER
     printf("\"placement\":\"NR\",\"binding\":[0,1,2,3,4,5,6,7],\"weightStationary\":true,"
            "\"bitSerial\":true,\"profile\":\"behavioral\",\"operation\":\"proj\","
-           "\"dataflow\":\"wsap\",\"ppaEnabled\":false},"
+           "\"dataflow\":\"%s\",\"ppaEnabled\":false},"
            "\"identities\":{"
            "\"caller\":\"0ce51e3ab99c9d02e7e0647f8dd159243f23f096e17cdcd3d9d3cb7912f6407a\","
-           "\"candidate\":\"cc7e60234578373f8af5755749069b0648d984b5c5f606bbe45163b7b8b47213\","
+           "\"candidate\":\"%s\","
            "\"tensors\":\"fa2769811b18e9ebf91ba6053a8b009fe2f17f2a6008b1d3b31d3e71fc12adad\","
            "\"costs\":\"c4c08d0908699751ab4223d9edcccce743079ab2004a1be06096ff0a7445cb99\","
-           "\"proposal\":\"a9704b71d22bdc88ff857951074088e2ce8cd2d3913a6ea534f9ef2406f57ea9\"},"
-           "\"candidate_origin\":\"historical_initial_proposal\",\"seed\":null,\"rng\":\"not_applicable\","
+           "\"proposal\":\"%s\"},"
+           "\"candidate_origin\":\"%s\",\"seed\":null,\"rng\":\"%s\","
            "\"tensors\":{\"X\":{\"role\":\"activation\",\"shape\":[5,9],\"bits\":8,\"layout\":\"row_major\",\"virtual_shape\":[5,16]},"
            "\"W\":{\"role\":\"stored_weight\",\"shape\":[9,7],\"bits\":8,\"layout\":\"row_major\",\"virtual_shape\":[8,16],\"virtual_layout\":\"n_k\"},"
            "\"Y\":{\"role\":\"output\",\"shape\":[5,7],\"bits\":32,\"layout\":\"row_major\"}},"
            "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
+           t->pf_export ? "wspp" : "wsap",
+           t->pf_export ? t->candidate_sha256 : "cc7e60234578373f8af5755749069b0648d984b5c5f606bbe45163b7b8b47213",
+           t->pf_export ? t->proposal_sha256 : "a9704b71d22bdc88ff857951074088e2ce8cd2d3913a6ea534f9ef2406f57ea9",
+           t->pf_export ? "controlled_generator_probe" : "historical_initial_proposal",
+           t->pf_export ? "controlled_values_not_search" : "not_applicable",
            a_count, p_count, sizes[0], sizes[1]);
-    source(tiling_function, tiling_line, "AF_SCR_ATOS");
+    source(tiling_function, tiling_line, t->pf_export ? "PF_SCR_ATOS" : "AF_SCR_ATOS");
     printf(",\"blocks\":[");
-    for (int i = 0; i < 4; ++i)
-        printf("%s{\"block\":%d,\"p\":%d,\"a\":%d,\"set\":%d,\"atos\":%d}",
-               i ? "," : "", i, i / 2, i % 2, blocks[i][0], blocks[i][1]);
+    if (t->pf_export) {
+        /* 只列出真實 program 記錄順序，不在序列化時重建 PF 策略。 */
+        int index = 0;
+        for (int i = 0; i < count; ++i) if (ops[i].kind == PROGRAM) {
+            const Op *o = &ops[i];
+            printf("%s{\"block\":%d,\"p\":%d,\"a\":%d,\"set\":%d,\"atos\":%d}",
+                   index ? "," : "", index, o->p, o->a, o->set, blocks[o->p * 2 + o->a][1]);
+            ++index;
+        }
+    } else {
+        for (int i = 0; i < 4; ++i)
+            printf("%s{\"block\":%d,\"p\":%d,\"a\":%d,\"set\":%d,\"atos\":%d}",
+                   i ? "," : "", i, i / 2, i % 2, blocks[i][0], blocks[i][1]);
+    }
     printf("]},\"operations\":[");
     const char *kinds[] = {"cache_fill", "weight_load_program", "input_read", "compute"};
     for (int i = 0; i < count; ++i) {
@@ -178,6 +201,7 @@ int schedule_write(void)
                i ? "," : "", o->id, i, kinds[o->kind - FILL]);
         const char *decision = o->kind == FILL ? "WP_CACHE_PREFIX" : o->kind == PROGRAM ? "PROGRAM_BLOCK" :
             o->kind == READ ? (o->direct ? "DIRECT_SOURCE" : "CACHE_SOURCE") : (o->atos == 0 ? "AOR" : "FINAL_TOS");
+        if (t->pf_export && o->kind == COMPUTE) decision = o->atos == 1 ? "STORE_TOS" : "FINAL_AOS";
         source(o->function, o->line, decision);
         int last = 0, overwritten_by = 0;
         for (int j = 0; j < count; ++j) {
@@ -200,7 +224,7 @@ int schedule_write(void)
                o->kind == READ ? (o->direct ? "direct" : "cached") : "external_or_logical",
                o->input, o->program, o->set, o->version, o->previous, o->owner, o->atos,
                o->kind != COMPUTE ? "none" : o->previous ? "accumulate_finalize" : "initialize_keep",
-               o->kind == COMPUTE && o->atos == 1 ? "true" : "false",
+               o->kind == COMPUTE && (t->pf_export ? o->final : o->atos == 1) ? "true" : "false",
                o->overwrite, overwritten_by, last,
                o->kind == FILL || (o->kind == READ && !o->direct) ? o->m * 9 + o->k0 : -1,
                o->kind == COMPUTE ? o->k0 : 0, o->kind == COMPUTE ? o->k1 : 0);

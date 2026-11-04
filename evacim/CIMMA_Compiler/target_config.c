@@ -41,14 +41,27 @@ static int decimal(const char *s, uint64_t *value)
     return 1;
 }
 
-int target_parse(int argc, char **argv, TargetConfig *target)
+static int parse(int argc, char **argv, TargetConfig *target, int pf)
 {
     unsigned char seen[sizeof(fields) / sizeof(fields[0])] = {0};
     memset(target, 0, sizeof(*target));
+    target->pf_export = pf;
     for (int arg = 0; arg < argc; ++arg) {
         const char *equals = strchr(argv[arg], '=');
         if (!equals || equals == argv[arg]) return reject("需要 key=value", argv[arg]);
         const size_t length = (size_t)(equals - argv[arg]);
+        char *hash = pf && length == strlen("candidateSha256") &&
+            !strncmp(argv[arg], "candidateSha256", length) ? target->candidate_sha256 :
+            pf && length == strlen("proposalSha256") && !strncmp(argv[arg], "proposalSha256", length) ?
+            target->proposal_sha256 : NULL;
+        if (hash) {
+            if (*hash) return reject("重複欄位", argv[arg]);
+            const char *value = equals + 1;
+            if (strlen(value) != 64 || strspn(value, "0123456789abcdef") != 64)
+                return reject("需要小寫 SHA-256", argv[arg]);
+            memcpy(hash, value, 65);
+            continue;
+        }
         size_t i;
         for (i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
             if (strlen(fields[i].name) == length && !strncmp(fields[i].name, argv[arg], length))
@@ -58,7 +71,8 @@ int target_parse(int argc, char **argv, TargetConfig *target)
         seen[i] = 1;
         const char *value = equals + 1;
         if (fields[i].text) {
-            if (strcmp(value, fields[i].text)) return reject("不支援的固定 F7 配置", fields[i].name);
+            const char *expected = pf && !strcmp(fields[i].name, "dataflow") ? "wspp" : fields[i].text;
+            if (strcmp(value, expected)) return reject("不支援的固定 F7 配置", fields[i].name);
         } else {
             uint64_t number;
             if (!decimal(value, &number)) return reject("無效或溢位的非負整數", fields[i].name);
@@ -68,7 +82,19 @@ int target_parse(int argc, char **argv, TargetConfig *target)
     }
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
         if (!seen[i]) return reject("缺少必要欄位", fields[i].name);
+    if (pf && (!*target->candidate_sha256 || !*target->proposal_sha256))
+        return reject("缺少必要欄位", "candidateSha256/proposalSha256");
     return 0;
+}
+
+int target_parse(int argc, char **argv, TargetConfig *target)
+{
+    return parse(argc, argv, target, 0);
+}
+
+int target_parse_pf(int argc, char **argv, TargetConfig *target)
+{
+    return parse(argc, argv, target, 1);
 }
 
 static uint64_t ceil_div(uint64_t n, uint64_t d)
@@ -139,9 +165,9 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
             return reject("SCR 批次不符", "weight_update_ls");
     for (int ip = 0; ip < p; ++ip)
         for (int ia = 0; ia < a; ++ia)
-            if (sets[ip][ia] != (int)(((uint64_t)ip * a + ia) % t->macroStorageSets) ||
-                atos[ip][ia] != (ia == a - 1 ? 1 : 0))
-                return reject("AF／SCR 結果不符", "ls_matrix/atos_matrix");
+            if (sets[ip][ia] != (t->pf_export ? ip : ia) ||
+                atos[ip][ia] != (t->pf_export ? ia + 1 : (ia == a - 1 ? 1 : 0)))
+                return reject(t->pf_export ? "PF／SCR 結果不符" : "AF／SCR 結果不符", "ls_matrix/atos_matrix");
 
     const uint64_t cache = target_cache_vectors(t);
     const uint64_t slot = t->logicalCols * (t->outputBits / 8);

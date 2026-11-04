@@ -24,10 +24,13 @@ typedef struct {
 #define TARGET_MEMBER(name, expected) uint64_t name;
     TARGET_F7_NUMBERS(TARGET_MEMBER)
 #undef TARGET_MEMBER
+    int pf_export;
+    char candidate_sha256[65], proposal_sha256[65];
 } TargetConfig;
 
 /* 成功回傳 0；失敗回傳 2，不建立檔案。 */
 int target_parse(int argc, char **argv, TargetConfig *target);
+int target_parse_pf(int argc, char **argv, TargetConfig *target);
 uint64_t target_cache_vectors(const TargetConfig *target);
 int target_x_index(const TargetConfig *, uint64_t m, uint64_t k,
                    uint64_t *effective, uint64_t *virtual_index);
