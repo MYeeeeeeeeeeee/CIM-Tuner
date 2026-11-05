@@ -45,7 +45,8 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
 {
     unsigned char seen[sizeof(fields) / sizeof(fields[0])] = {0};
     memset(target, 0, sizeof(*target));
-    target->pf_export = pf;
+    target->ip_af_export = pf == 2;
+    target->pf_export = pf == 1;
     for (int arg = 0; arg < argc; ++arg) {
         const char *equals = strchr(argv[arg], '=');
         if (!equals || equals == argv[arg]) return reject("需要 key=value", argv[arg]);
@@ -71,7 +72,7 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
         seen[i] = 1;
         const char *value = equals + 1;
         if (fields[i].text) {
-            const char *expected = pf && !strcmp(fields[i].name, "dataflow") ? "wspp" : fields[i].text;
+            const char *expected = pf && !strcmp(fields[i].name, "dataflow") ? (pf == 2 ? "isap" : "wspp") : fields[i].text;
             if (strcmp(value, expected)) return reject("不支援的固定 F7 配置", fields[i].name);
         } else {
             uint64_t number;
@@ -95,6 +96,11 @@ int target_parse(int argc, char **argv, TargetConfig *target)
 int target_parse_pf(int argc, char **argv, TargetConfig *target)
 {
     return parse(argc, argv, target, 1);
+}
+
+int target_parse_ip_af(int argc, char **argv, TargetConfig *target)
+{
+    return parse(argc, argv, target, 2);
 }
 
 static uint64_t ceil_div(uint64_t n, uint64_t d)

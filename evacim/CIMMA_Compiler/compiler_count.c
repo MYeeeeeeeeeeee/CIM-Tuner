@@ -69,29 +69,34 @@ void a2a_process(void);
 int main(int argc, char *argv[]){
     if (argc > 1 && !strncmp(argv[1], "--", 2)) {
         if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
-            strcmp(argv[1], "--target-f7-pf-export")) {
+            strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export")) {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
         int pf = !strcmp(argv[1], "--target-f7-pf-export");
-        int result = pf ? target_parse_pf(argc - 2, argv + 2, &target) : target_parse(argc - 2, argv + 2, &target);
+        int ip = !strcmp(argv[1], "--target-f7-ip-af-export");
+        int result = ip ? target_parse_ip_af(argc - 2, argv + 2, &target) :
+            pf ? target_parse_pf(argc - 2, argv + 2, &target) : target_parse(argc - 2, argv + 2, &target);
         if (result) return result;
         target_mode = 1;
-        target_export = pf || !strcmp(argv[1], "--target-f7-export");
+        target_export = ip || pf || !strcmp(argv[1], "--target-f7-export");
         if (target_export) schedule_begin(&target);
         /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */
         config.AL = (int)(target.logicalRows * target.gridCols);
         config.PC = (int)(target.logicalCols * target.gridRows);
         config.SCR = (int)target.macroStorageSets;
         acc0.LocalSwitchrows = config.SCR;
-        data_stream = pf ? "wspp" : "wsap";
+        data_stream = ip ? "isap" : pf ? "wspp" : "wsap";
         proj_process((int)target.n, (int)target.k, (int)target.m);
         result = target_export ? target_validate(&target, acc_times, para_times,
             weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix) :
             target_diagnose(&target, acc_times, para_times,
             weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix);
         if (target_export && !result) {
-            ws_process();
+            if (!ip) ws_process();
+            else if (strcmp(data_stream,"isap")) {
+                fprintf(stderr,"IP_BRANCH_MISMATCH requested=isap actual=%s\n",data_stream); return 2;
+            }
             result = schedule_write();
         }
         for (int i = 0; i < para_times; ++i) {
@@ -296,6 +301,14 @@ int load_is_wide_bus(int num_rows, int input_map_position) {
 }
 
 int load_is_block(int num_rows, int input_map_position){
+    if (target_mode && target.ip_af_export) {
+        /* 目標模式的實際單位是有效vector；不把原packed rows當有效bytes。 */
+        const int first = input_map_position / 9;
+        const int vectors = input_map_channel-first < input_channels_per_ISload ?
+            input_map_channel-first : input_channels_per_ISload;
+        schedule_ip_cache(first,vectors,0,__func__,__LINE__); /* IP_CACHE_FILL */
+        return input_map_position+vectors*9;
+    }
     bus_is_width_ratio = config.BUS_WIDTH / acc0.InputSRAMWidth;
     if (bus_is_width_ratio == 0) {
         return load_is_narrow_bus(num_rows, input_map_position);
@@ -956,6 +969,10 @@ void is_process(void) {
     int i_block = 0;
 
     if (IS_load_times_per_inst == 0){
+        if (target_mode) {
+            fprintf(stderr,"IP_FALLBACK_FORBIDDEN requested=isap IS_load_times_per_inst=0\n");
+            return;
+        }
         if (strcmp(data_stream, "isap") == 0)   strcpy(data_stream, "wsap");
         if (strcmp(data_stream, "ispp") == 0)   strcpy(data_stream, "wspp");
 
@@ -974,20 +991,24 @@ void is_process(void) {
     }
 
     for (int i_IS_load = 0; i_IS_load < IS_load_times_per_inst; i_IS_load++) {
-        input_map_position = load_is_block(IS_load_rows[i_IS_load], input_map_position);
+        const int first = i_IS_load*input_channels_per_ISload;
+        const int vectors = target_mode ? (input_map_channel-first < input_channels_per_ISload ?
+            input_map_channel-first : input_channels_per_ISload) : IS_load_rows[i_IS_load]/rows_per_input_channel;
+        input_map_position = load_is_block(target_mode ? 0 : IS_load_rows[i_IS_load], input_map_position);
 
         i_block = 0;
         for (int j_weight_load = 0; j_weight_load < weight_update_times_per_inst; j_weight_load++) {
+            if (target_export) schedule_batch(i_IS_load*weight_update_times_per_inst+j_weight_load,__func__,__LINE__); /* IP_BATCH */
             //i_block = 
             wu_ls_bank(weight_update_ls[j_weight_load], config.PC, i_block);
 
-            for (int i = 0; i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
+            for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
                 idle();
             }
 
             for (int i_input_channel = i_IS_load * input_channels_per_ISload; 
                  i_input_channel < i_IS_load * input_channels_per_ISload + 
-                 IS_load_rows[i_IS_load] / rows_per_input_channel; 
+                 vectors;
                  i_input_channel++) {
 
                 for (int j_ls = 0; j_ls < weight_update_ls[j_weight_load]; j_ls++) {
@@ -998,6 +1019,7 @@ void is_process(void) {
 
             i_block += weight_update_ls[j_weight_load];
         }
+        if (target_export) schedule_ip_cache(first,vectors,1,__func__,__LINE__); /* IP_CACHE_EVICT */
     }
 }
 
@@ -1039,6 +1061,8 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
 
     if (target_mode) {
         input_channels_per_ISload = (int)target_cache_vectors(&target);
+        if (target.ip_af_export)
+            IS_load_times_per_inst=(input_map_channel+input_channels_per_ISload-1)/input_channels_per_ISload;
     } else {
         input_data_per_row = floor(acc0.InputSRAMWidth / config.DATA_WIDTH);
         rows_per_input_channel = (int)ceil((float)input_map_length / input_data_per_row);
@@ -1149,7 +1173,19 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     if (target_export)
         schedule_tiling(acc_times, para_times, weight_update_times_per_inst,
                         weight_update_ls, ls_matrix, atos_matrix, __func__, __LINE__); /* A2B_TILING */
-    if (target_mode) return;
+    if (target_mode) {
+        if (target.ip_af_export) {
+#ifdef TARGET_IP_ZERO_LOAD
+            IS_load_times_per_inst=0;
+#endif
+#ifdef TARGET_IP_FORCE_WP
+            data_stream="wsap"; ws_process();
+#else
+            is_process();
+#endif
+        }
+        return;
+    }
 
     // // 打印基本计算结果
     // printf("input_data_per_row = %d\n", input_data_per_row);
