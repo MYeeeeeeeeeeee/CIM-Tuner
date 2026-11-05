@@ -96,7 +96,7 @@ void schedule_ip_cache(int first, int vectors, int evict, const char *function, 
 void schedule_batch(int next, const char *function, int line)
 {
     (void)function;
-    if (next < 0 || next >= (configuration->ip_af_export?6:2)) { failed = 1; return; }
+    if (next < 0 || next >= (configuration->ip_export?6:2)) { failed = 1; return; }
     batch = next; batch_lines[next] = line;
 }
 
@@ -167,7 +167,7 @@ int schedule_write(void)
     }
     const TargetConfig *t = configuration;
     printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"
-           "\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{", t->ip_af_export?3:t->pf_export ? 2 : 1);
+           "\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{", t->ip_export?3:t->pf_export ? 2 : 1);
 #define NUMBER(name, expected) printf("\"" #name "\":%" PRIu64 ",", t->name);
     TARGET_F7_NUMBERS(NUMBER)
 #undef NUMBER
@@ -185,18 +185,18 @@ int schedule_write(void)
            "\"W\":{\"role\":\"stored_weight\",\"shape\":[9,7],\"bits\":8,\"layout\":\"row_major\",\"virtual_shape\":[8,16],\"virtual_layout\":\"n_k\"},"
            "\"Y\":{\"role\":\"output\",\"shape\":[5,7],\"bits\":32,\"layout\":\"row_major\"}},"
            "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
-           t->ip_af_export?"isap":t->pf_export ? "wspp" : "wsap",
-           t->pf_export || t->ip_af_export ? t->candidate_sha256 : "cc7e60234578373f8af5755749069b0648d984b5c5f606bbe45163b7b8b47213",
-           t->pf_export || t->ip_af_export ? t->proposal_sha256 : "a9704b71d22bdc88ff857951074088e2ce8cd2d3913a6ea534f9ef2406f57ea9",
-           t->pf_export || t->ip_af_export ? "controlled_generator_probe" : "historical_initial_proposal",
-           t->pf_export || t->ip_af_export ? "controlled_values_not_search" : "not_applicable",
+           t->ip_export?(t->pf_export?"ispp":"isap"):t->pf_export ? "wspp" : "wsap",
+           t->pf_export || t->ip_export ? t->candidate_sha256 : "cc7e60234578373f8af5755749069b0648d984b5c5f606bbe45163b7b8b47213",
+           t->pf_export || t->ip_export ? t->proposal_sha256 : "a9704b71d22bdc88ff857951074088e2ce8cd2d3913a6ea534f9ef2406f57ea9",
+           t->pf_export || t->ip_export ? "controlled_generator_probe" : "historical_initial_proposal",
+           t->pf_export || t->ip_export ? "controlled_values_not_search" : "not_applicable",
            a_count, p_count, sizes[0], sizes[1]);
     source(tiling_function, tiling_line, t->pf_export ? "PF_SCR_ATOS" : "AF_SCR_ATOS");
     printf(",\"blocks\":[");
     if (t->pf_export) {
         /* 只列出真實 program 記錄順序，不在序列化時重建 PF 策略。 */
         int index = 0;
-        for (int i = 0; i < count; ++i) if (ops[i].kind == PROGRAM) {
+        for (int i = 0; i < count; ++i) if (ops[i].kind == PROGRAM && (!t->ip_export || ops[i].batch < 2)) {
             const Op *o = &ops[i];
             printf("%s{\"block\":%d,\"p\":%d,\"a\":%d,\"set\":%d,\"atos\":%d}",
                    index ? "," : "", index, o->p, o->a, o->set, blocks[o->p * 2 + o->a][1]);
@@ -213,7 +213,7 @@ int schedule_write(void)
         const Op *o = &ops[i];
         printf("%s{\"id\":%d,\"source_order\":%d,\"kind\":\"%s\",\"source\":",
                i ? "," : "", o->id, i, kinds[o->kind - FILL]);
-        const char *decision = o->kind == FILL ? (t->ip_af_export?"IP_CACHE_FILL":"WP_CACHE_PREFIX") :
+        const char *decision = o->kind == FILL ? (t->ip_export?"IP_CACHE_FILL":"WP_CACHE_PREFIX") :
             o->kind==EVICT?"IP_CACHE_EVICT":o->kind == PROGRAM ? "PROGRAM_BLOCK" :
             o->kind == READ ? (o->direct ? "DIRECT_SOURCE" : "CACHE_SOURCE") : (o->atos == 0 ? "AOR" : "FINAL_TOS");
         if (t->pf_export && o->kind == COMPUTE) decision = o->atos == 1 ? "STORE_TOS" : "FINAL_AOS";
@@ -225,7 +225,7 @@ int schedule_write(void)
             if (ops[j].kind == PROGRAM && ops[j].overwrite == o->id) overwritten_by = ops[j].id;
         }
         int payload = o->kind==EVICT?0:(o->k1 - o->k0) * (o->kind == PROGRAM ? o->n1 - o->n0 : 1);
-        if(t->ip_af_export)printf(",\"input_group\":%d,\"cache_slot\":%d",o->m>=0?o->m/2:o->batch/2,
+        if(t->ip_export)printf(",\"input_group\":%d,\"cache_slot\":%d",o->m>=0?o->m/2:o->batch/2,
             o->kind==FILL || o->kind==EVICT || o->kind==READ ? o->m%2:-1);
         printf(",\"request\":\"request-0\",\"batch\":%d,\"m\":%d,\"p\":%d,\"a\":%d,"
                "\"k\":[%d,%d],\"n\":[%d,%d],\"virtual_k\":[%d,%d],\"virtual_n\":[%d,%d],"
@@ -243,7 +243,7 @@ int schedule_write(void)
                o->kind != COMPUTE ? "none" : o->previous ? "accumulate_finalize" : "initialize_keep",
                o->kind == COMPUTE && (t->pf_export ? o->final : o->atos == 1) ? "true" : "false",
                o->overwrite, overwritten_by, last,
-               o->kind == FILL || (o->kind == READ && !o->direct) ? (t->ip_af_export?o->m%2:o->m) * 9 + o->k0 : -1,
+               o->kind == FILL || (o->kind == READ && !o->direct) ? (t->ip_export?o->m%2:o->m) * 9 + o->k0 : -1,
                o->kind == COMPUTE ? o->k0 : 0, o->kind == COMPUTE ? o->k1 : 0);
         uses(o->id); printf(",\"depends_on\":[");
         for (int j = 0; j < o->dependencies_count; ++j)
@@ -259,9 +259,9 @@ int schedule_write(void)
                "\"reason\":\"虛擬範圍扣除有效範圍沒有 payload；原 packing、reward 與 read-slot 由目標表示取代，未產生原 ISA 實例\","
                "\"physical_children_expanded\":false}");
     }
-    for (int b = 0; b < (t->ip_af_export?6:batch_count); ++b) {
+    for (int b = 0; b < (t->ip_export?6:batch_count); ++b) {
         printf(",{\"id\":\"nop-batch-%d\",\"batch\":%d,\"source\":", b, b);
-        source(t->ip_af_export?"is_process":"ws_process", batch_lines[b], "LEGACY_PROGRAM_WAIT");
+        source(t->ip_export?"is_process":"ws_process", batch_lines[b], "LEGACY_PROGRAM_WAIT");
         printf(",\"rule\":\"replace_packing_wait_with_program_dependency\","
                "\"reason\":\"原 bus pipeline 等待不轉成目標 NOP；保留 program-to-use 相依\",\"legacy_instruction_count\":null}");
     }

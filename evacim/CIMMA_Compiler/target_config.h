@@ -25,7 +25,7 @@ typedef struct {
     TARGET_F7_NUMBERS(TARGET_MEMBER)
 #undef TARGET_MEMBER
     int pf_export;
-    int ip_af_export;
+    int ip_export;
     char candidate_sha256[65], proposal_sha256[65];
 } TargetConfig;
 
@@ -33,6 +33,7 @@ typedef struct {
 int target_parse(int argc, char **argv, TargetConfig *target);
 int target_parse_pf(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_af(int argc, char **argv, TargetConfig *target);
+int target_parse_ip_pf(int argc, char **argv, TargetConfig *target);
 uint64_t target_cache_vectors(const TargetConfig *target);
 int target_x_index(const TargetConfig *, uint64_t m, uint64_t k,
                    uint64_t *effective, uint64_t *virtual_index);
