@@ -48,7 +48,7 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
     target->ip_export = pf == 2 || pf == 3;
     target->r_export = pf >= 4; target->equal_mn = pf == 5;
     int validation_seen = 0;
-    target->pf_export = pf == 1 || pf == 3;
+    target->pf_export = pf == 1 || pf == 3 || pf == 6;
     for (int arg = 0; arg < argc; ++arg) {
         const char *equals = strchr(argv[arg], '=');
         if (!equals || equals == argv[arg]) return reject("需要 key=value", argv[arg]);
@@ -78,7 +78,7 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
         seen[i] = 1;
         const char *value = equals + 1;
         if (fields[i].text) {
-            const char *expected = target->r_export ? (!strcmp(fields[i].name,"placement") ? "R" : fields[i].text) : pf && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
+            const char *expected = target->r_export ? (!strcmp(fields[i].name,"placement") ? "R" : !strcmp(fields[i].name,"dataflow") && target->pf_export ? "wspp" : fields[i].text) : pf && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
             if (strcmp(value, expected)) return reject("不支援的固定 F7 配置", fields[i].name);
         } else {
             uint64_t number;
@@ -275,5 +275,7 @@ int target_parse_ip_pf(int argc, char **argv, TargetConfig *target)
 
 int target_parse_r(int argc, char **argv, TargetConfig *target, int equal_mn)
 { return parse(argc,argv,target,equal_mn?5:4); }
+int target_parse_r_pf(int argc, char **argv, TargetConfig *t) { return parse(argc,argv,t,6); }
+
 uint64_t target_stream_vectors(const TargetConfig *t) { return t->r_export?t->n:t->m; }
 uint64_t target_stored_lanes(const TargetConfig *t) { return t->r_export?t->m:t->n; }

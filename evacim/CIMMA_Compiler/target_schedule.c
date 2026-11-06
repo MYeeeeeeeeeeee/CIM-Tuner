@@ -175,7 +175,7 @@ int schedule_write(void)
         TARGET_F7_NUMBERS(PRINT_R)
 #undef PRINT_R
         printf("\"placement\":\"R\",\"binding\":[0,1,2,3,4,5,6,7],\"weightStationary\":true,\"bitSerial\":true,"
-               "\"profile\":\"behavioral\",\"operation\":\"proj\",\"dataflow\":\"wsap\",\"ppaEnabled\":false},"
+               "\"profile\":\"behavioral\",\"operation\":\"proj\",\"dataflow\":\"%s\",\"ppaEnabled\":false},"
                "\"identities\":{\"caller\":\"0ce51e3ab99c9d02e7e0647f8dd159243f23f096e17cdcd3d9d3cb7912f6407a\","
                "\"candidate\":\"%s\",\"tensors\":\"%s\",\"costs\":\"c4c08d0908699751ab4223d9edcccce743079ab2004a1be06096ff0a7445cb99\","
                "\"proposal\":\"%s\"},\"candidate_origin\":\"controlled_generator_probe\",\"seed\":null,\"rng\":\"controlled_values_not_search\","
@@ -183,7 +183,7 @@ int schedule_write(void)
                "\"W\":{\"role\":\"streamed_weight\",\"shape\":[9,%llu],\"bits\":8,\"layout\":\"row_major\"},"
                "\"Y\":{\"role\":\"output\",\"shape\":[5,%llu],\"bits\":32,\"layout\":\"row_major\"}},"
                "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
-               t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
+               t->pf_export?"wspp":"wsap",t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
                a_count,p_count,sizes[0],sizes[1]);
     } else {
     printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"

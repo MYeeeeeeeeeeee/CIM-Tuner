@@ -37,6 +37,7 @@ int target_parse_pf(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_af(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_pf(int argc, char **argv, TargetConfig *target);
 int target_parse_r(int, char **, TargetConfig *, int equal_mn);
+int target_parse_r_pf(int, char **, TargetConfig *);
 uint64_t target_stream_vectors(const TargetConfig *);
 uint64_t target_stored_lanes(const TargetConfig *);
 uint64_t target_cache_vectors(const TargetConfig *target);
