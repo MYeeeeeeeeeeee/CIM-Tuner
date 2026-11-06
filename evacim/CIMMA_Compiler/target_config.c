@@ -45,13 +45,19 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
 {
     unsigned char seen[sizeof(fields) / sizeof(fields[0])] = {0};
     memset(target, 0, sizeof(*target));
-    target->ip_export = pf >= 2;
+    target->ip_export = pf == 2 || pf == 3;
+    target->r_export = pf >= 4; target->equal_mn = pf == 5;
+    int validation_seen = 0;
     target->pf_export = pf == 1 || pf == 3;
     for (int arg = 0; arg < argc; ++arg) {
         const char *equals = strchr(argv[arg], '=');
         if (!equals || equals == argv[arg]) return reject("需要 key=value", argv[arg]);
         const size_t length = (size_t)(equals - argv[arg]);
-        char *hash = pf && length == strlen("candidateSha256") &&
+        if (target->equal_mn && length==strlen("validationCase") && !strncmp(argv[arg],"validationCase",length)) {
+            if (validation_seen++ || strcmp(equals+1,"equal_mn")) return reject("非法驗證案例",argv[arg]);
+            continue;
+        }
+        char *hash = target->r_export && length==strlen("tensorSha256") && !strncmp(argv[arg],"tensorSha256",length) ? target->tensor_sha256 : pf && length == strlen("candidateSha256") &&
             !strncmp(argv[arg], "candidateSha256", length) ? target->candidate_sha256 :
             pf && length == strlen("proposalSha256") && !strncmp(argv[arg], "proposalSha256", length) ?
             target->proposal_sha256 : NULL;
@@ -72,12 +78,12 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
         seen[i] = 1;
         const char *value = equals + 1;
         if (fields[i].text) {
-            const char *expected = pf && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
+            const char *expected = target->r_export ? (!strcmp(fields[i].name,"placement") ? "R" : fields[i].text) : pf && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
             if (strcmp(value, expected)) return reject("不支援的固定 F7 配置", fields[i].name);
         } else {
             uint64_t number;
             if (!decimal(value, &number)) return reject("無效或溢位的非負整數", fields[i].name);
-            if (number != fields[i].expected) return reject("不支援的固定 F7 配置", fields[i].name);
+            if (number != (target->equal_mn && !strcmp(fields[i].name,"n") ? 5 : fields[i].expected)) return reject("不支援的固定 F7 配置", fields[i].name);
             *(uint64_t *)((unsigned char *)target + fields[i].offset) = number;
         }
     }
@@ -85,6 +91,8 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
         if (!seen[i]) return reject("缺少必要欄位", fields[i].name);
     if (pf && (!*target->candidate_sha256 || !*target->proposal_sha256))
         return reject("缺少必要欄位", "candidateSha256/proposalSha256");
+    if (target->r_export && (!*target->tensor_sha256 || (target->equal_mn && !validation_seen)))
+        return reject("缺少R身分或驗證案例", "tensorSha256/validationCase");
     return 0;
 }
 
@@ -111,7 +119,7 @@ static uint64_t ceil_div(uint64_t n, uint64_t d)
 uint64_t target_cache_vectors(const TargetConfig *t)
 {
     const uint64_t count = t->inputCacheBytes / t->k;
-    return count < t->m ? count : t->m;
+    return count < target_stream_vectors(t) ? count : target_stream_vectors(t);
 }
 
 /* 僅作已驗配置的索引計算；無效範圍不改寫輸出，也不讀取 tensor。 */
@@ -128,7 +136,7 @@ int target_x_index(const TargetConfig *t, uint64_t m, uint64_t k,
 int target_w_index(const TargetConfig *t, uint64_t k, uint64_t n,
                    uint64_t *effective, uint64_t *virtual_index)
 {
-    if (k >= t->k || n >= t->n) return 0;
+    if (k >= t->k || n >= target_stored_lanes(t)) return 0;
     const uint64_t al = t->logicalRows * t->gridCols;
     *effective = k * t->n + n;
     *virtual_index = n * ceil_div(t->k, al) * al + k;
@@ -140,13 +148,13 @@ int target_fragment(const TargetConfig *t, uint64_t p, uint64_t a,
 {
     const uint64_t al = t->logicalRows * t->gridCols;
     const uint64_t pc = t->logicalCols * t->gridRows;
-    if (p >= ceil_div(t->n, pc) || a >= ceil_div(t->k, al) ||
+    if (p >= ceil_div(target_stored_lanes(t), pc) || a >= ceil_div(t->k, al) ||
         row >= t->gridRows || col >= t->gridCols) return 0;
     const uint64_t k = a * al + col * t->logicalRows;
     const uint64_t n = p * pc + row * t->logicalCols;
-    if (k >= t->k || n >= t->n) return 0;
+    if (k >= t->k || n >= target_stored_lanes(t)) return 0;
     *rows = t->k - k < t->logicalRows ? t->k - k : t->logicalRows;
-    *cols = t->n - n < t->logicalCols ? t->n - n : t->logicalCols;
+    *cols = target_stored_lanes(t) - n < t->logicalCols ? target_stored_lanes(t) - n : t->logicalCols;
     return 1;
 }
 
@@ -162,7 +170,7 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
 {
     const uint64_t al = t->logicalRows * t->gridCols;
     const uint64_t pc = t->logicalCols * t->gridRows;
-    if ((uint64_t)a != ceil_div(t->k, al) || (uint64_t)p != ceil_div(t->n, pc) ||
+    if ((uint64_t)a != ceil_div(t->k, al) || (uint64_t)p != ceil_div(target_stored_lanes(t), pc) ||
         (uint64_t)batches != ceil_div((uint64_t)a * p, t->macroStorageSets))
         return reject("共用分塊結果不符", "proj_process");
     /* 核對真實共用 AF／SCR 決策，不匯出操作或重新產生策略。 */
@@ -196,8 +204,9 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
                     ++fragments;
                     program_bytes += r * c;
                 }
-    if (program_bytes != t->k * t->n) return reject("有效範圍不完整", "weight bytes");
+    if (program_bytes != t->k * target_stored_lanes(t)) return reject("有效範圍不完整", "weight bytes");
 
+    if (t->r_export && !emit) return 0;
     uint64_t x, xv, w, wv, r, c, gb, pe, link;
     if (!target_x_index(t, 1, 8, &x, &xv) || !target_w_index(t, 8, 6, &w, &wv) ||
         !target_fragment(t, 1, 1, 1, 0, &r, &c) ||
@@ -263,3 +272,8 @@ int target_parse_ip_pf(int argc, char **argv, TargetConfig *target)
 {
     return parse(argc, argv, target, 3);
 }
+
+int target_parse_r(int argc, char **argv, TargetConfig *target, int equal_mn)
+{ return parse(argc,argv,target,equal_mn?5:4); }
+uint64_t target_stream_vectors(const TargetConfig *t) { return t->r_export?t->n:t->m; }
+uint64_t target_stored_lanes(const TargetConfig *t) { return t->r_export?t->m:t->n; }

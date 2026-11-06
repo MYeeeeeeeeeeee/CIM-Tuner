@@ -26,6 +26,8 @@ typedef struct {
 #undef TARGET_MEMBER
     int pf_export;
     int ip_export;
+    int r_export, equal_mn;
+    char tensor_sha256[65];
     char candidate_sha256[65], proposal_sha256[65];
 } TargetConfig;
 
@@ -34,6 +36,9 @@ int target_parse(int argc, char **argv, TargetConfig *target);
 int target_parse_pf(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_af(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_pf(int argc, char **argv, TargetConfig *target);
+int target_parse_r(int, char **, TargetConfig *, int equal_mn);
+uint64_t target_stream_vectors(const TargetConfig *);
+uint64_t target_stored_lanes(const TargetConfig *);
 uint64_t target_cache_vectors(const TargetConfig *target);
 int target_x_index(const TargetConfig *, uint64_t m, uint64_t k,
                    uint64_t *effective, uint64_t *virtual_index);

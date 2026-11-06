@@ -13,12 +13,12 @@ typedef struct {
     int line;
 } Op;
 static Op ops[LIMIT];
-static int count, failed, batch, current[2], fills[5], partial[10], last_read;
+static int count, failed, batch, current[2], fills[7], partial[14], last_read;
 static int blocks[4][2], sizes[2], a_count, p_count, batch_count, tiling_line;
 static const char *tiling_function;
 static const TargetConfig *configuration;
 static int batch_lines[6];
-static unsigned coverage[10];
+static unsigned coverage[14];
 
 static Op *append(int kind, const char *function, int line)
 {
@@ -43,7 +43,7 @@ static void region(Op *o, int p, int a)
 {
     o->p = p; o->a = a;
     o->k0 = a * 8; o->k1 = o->k0 + 8 < 9 ? o->k0 + 8 : 9;
-    o->n0 = p * 4; o->n1 = o->n0 + 4 < 7 ? o->n0 + 4 : 7;
+    o->n0 = p * 4; o->n1 = o->n0 + 4 < (int)target_stored_lanes(configuration) ? o->n0 + 4 : (int)target_stored_lanes(configuration);
     if (p < 0 || p >= 2 || a < 0 || a >= 2) failed = 1;
 }
 
@@ -116,7 +116,7 @@ void schedule_program(int p, int a, int set, const char *function, int line)
 
 void schedule_read(int m, int p, int a, int direct, const char *function, int line)
 {
-    if (m < 0 || m >= 5) { failed = 1; return; }
+    if (m < 0 || m >= (int)target_stream_vectors(configuration)) { failed = 1; return; }
     Op *o = append(READ, function, line); if (!o) return;
     region(o, p, a); o->m = m; o->direct = direct;
     o->input = direct ? 0 : fills[m]; dependency(o, o->input);
@@ -126,7 +126,7 @@ void schedule_read(int m, int p, int a, int direct, const char *function, int li
 void schedule_compute(int m, int p, int a, int set, int atos, int owner,
                       const char *function, int line)
 {
-    if (set < 0 || set >= 2 || owner < 0 || owner >= 10) { failed = 1; return; }
+    if (set < 0 || set >= 2 || owner < 0 || owner >= (int)target_stream_vectors(configuration)*2) { failed = 1; return; }
     Op *o = append(COMPUTE, function, line); if (!o) return;
     region(o, p, a); o->m = m; o->set = set; o->atos = atos; o->owner = owner;
     o->input = last_read; o->program = current[set];
@@ -166,6 +166,26 @@ int schedule_write(void)
         return 2;
     }
     const TargetConfig *t = configuration;
+    if(t->r_export) {
+        printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":4,\"request\":\"request-0\","
+               "\"provenance_manifest\":\"provenance.json\",\"operand_role\":\"R\",\"external_shape\":[5,9,%llu],"
+               "\"logical_shape\":[%llu,9,5],\"validation_case\":\"%s\",\"config\":{",
+               (unsigned long long)t->n,(unsigned long long)t->n,t->equal_mn?"equal_mn":"fixed_f7");
+#define PRINT_R(name, expected) printf("\"" #name "\":%llu,",(unsigned long long)t->name);
+        TARGET_F7_NUMBERS(PRINT_R)
+#undef PRINT_R
+        printf("\"placement\":\"R\",\"binding\":[0,1,2,3,4,5,6,7],\"weightStationary\":true,\"bitSerial\":true,"
+               "\"profile\":\"behavioral\",\"operation\":\"proj\",\"dataflow\":\"wsap\",\"ppaEnabled\":false},"
+               "\"identities\":{\"caller\":\"0ce51e3ab99c9d02e7e0647f8dd159243f23f096e17cdcd3d9d3cb7912f6407a\","
+               "\"candidate\":\"%s\",\"tensors\":\"%s\",\"costs\":\"c4c08d0908699751ab4223d9edcccce743079ab2004a1be06096ff0a7445cb99\","
+               "\"proposal\":\"%s\"},\"candidate_origin\":\"controlled_generator_probe\",\"seed\":null,\"rng\":\"controlled_values_not_search\","
+               "\"tensors\":{\"X\":{\"role\":\"stored_activation\",\"shape\":[5,9],\"bits\":8,\"layout\":\"row_major\"},"
+               "\"W\":{\"role\":\"streamed_weight\",\"shape\":[9,%llu],\"bits\":8,\"layout\":\"row_major\"},"
+               "\"Y\":{\"role\":\"output\",\"shape\":[5,%llu],\"bits\":32,\"layout\":\"row_major\"}},"
+               "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
+               t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
+               a_count,p_count,sizes[0],sizes[1]);
+    } else {
     printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"
            "\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{", t->ip_export?3:t->pf_export ? 2 : 1);
 #define NUMBER(name, expected) printf("\"" #name "\":%" PRIu64 ",", t->name);
@@ -191,6 +211,7 @@ int schedule_write(void)
            t->pf_export || t->ip_export ? "controlled_generator_probe" : "historical_initial_proposal",
            t->pf_export || t->ip_export ? "controlled_values_not_search" : "not_applicable",
            a_count, p_count, sizes[0], sizes[1]);
+    }
     source(tiling_function, tiling_line, t->pf_export ? "PF_SCR_ATOS" : "AF_SCR_ATOS");
     printf(",\"blocks\":[");
     if (t->pf_export) {
@@ -236,7 +257,7 @@ int schedule_write(void)
                "\"cache_offset\":%d,\"contribution_k\":[%d,%d],\"uses\":",
                o->batch, o->m, o->p, o->a, o->k0, o->k1, o->n0, o->n1,
                o->k0, o->kind == FILL || o->kind==EVICT ? 16 : o->k0 + 8, o->n0, o->kind == FILL || o->kind==EVICT ? 0 : o->n0 + 4,
-               o->kind == PROGRAM ? "W" : o->kind == COMPUTE ? "Y" : "X",
+               o->kind == PROGRAM ? (t->r_export?"X":"W") : o->kind == COMPUTE ? "Y" : (t->r_export?"W":"X"),
                o->kind == COMPUTE ? 0 : payload,
                o->kind == READ ? (o->direct ? "direct" : "cached") : "external_or_logical",
                o->input, o->program, o->set, o->version, o->previous, o->owner, o->atos,
