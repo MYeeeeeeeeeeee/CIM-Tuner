@@ -4,7 +4,7 @@
 #include <string.h>
 
 /* 固定 F7 的 metadata 上限；不配置 tensor／scratch payload。 */
-enum { LIMIT = 64, FILL, PROGRAM, READ, COMPUTE, EVICT };
+enum { LIMIT = 128, FILL, PROGRAM, READ, COMPUTE, EVICT };
 typedef struct {
     int id, kind, m, p, a, batch, set, version, k0, k1, n0, n1;
     int direct, input, program, previous, overwrite, atos, owner, final;
@@ -17,7 +17,7 @@ static int count, failed, batch, current[2], fills[7], partial[14], last_read;
 static int blocks[4][2], sizes[2], a_count, p_count, batch_count, tiling_line;
 static const char *tiling_function;
 static const TargetConfig *configuration;
-static int batch_lines[6];
+static int batch_lines[8];
 static unsigned coverage[14];
 
 static Op *append(int kind, const char *function, int line)
@@ -81,7 +81,7 @@ void schedule_cache(int vectors, const char *function, int line)
 
 void schedule_ip_cache(int first, int vectors, int evict, const char *function, int line)
 {
-    if(first<0 || first+vectors>5 || vectors<1 || vectors>2) {failed=1;return;}
+    if(first<0 || first+vectors>(int)target_stream_vectors(configuration) || vectors<1 || vectors>2) {failed=1;return;}
     for(int m=first;m<first+vectors;++m) {
         Op *o=append(evict?EVICT:FILL,function,line);if(!o)return;
         o->batch=-1;o->m=m;o->k1=9;
@@ -96,7 +96,7 @@ void schedule_ip_cache(int first, int vectors, int evict, const char *function, 
 void schedule_batch(int next, const char *function, int line)
 {
     (void)function;
-    if (next < 0 || next >= (configuration->ip_export?6:2)) { failed = 1; return; }
+    if (next < 0 || next >= (configuration->ip_export?((int)target_stream_vectors(configuration)+1)/2*2:2)) { failed = 1; return; }
     batch = next; batch_lines[next] = line;
 }
 
@@ -167,10 +167,10 @@ int schedule_write(void)
     }
     const TargetConfig *t = configuration;
     if(t->r_export) {
-        printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":4,\"request\":\"request-0\","
+        printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,\"request\":\"request-0\","
                "\"provenance_manifest\":\"provenance.json\",\"operand_role\":\"R\",\"external_shape\":[5,9,%llu],"
                "\"logical_shape\":[%llu,9,5],\"validation_case\":\"%s\",\"config\":{",
-               (unsigned long long)t->n,(unsigned long long)t->n,t->equal_mn?"equal_mn":"fixed_f7");
+               t->ip_export?5:4,(unsigned long long)t->n,(unsigned long long)t->n,t->equal_mn?"equal_mn":"fixed_f7");
 #define PRINT_R(name, expected) printf("\"" #name "\":%llu,",(unsigned long long)t->name);
         TARGET_F7_NUMBERS(PRINT_R)
 #undef PRINT_R
@@ -183,7 +183,7 @@ int schedule_write(void)
                "\"W\":{\"role\":\"streamed_weight\",\"shape\":[9,%llu],\"bits\":8,\"layout\":\"row_major\"},"
                "\"Y\":{\"role\":\"output\",\"shape\":[5,%llu],\"bits\":32,\"layout\":\"row_major\"}},"
                "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
-               t->pf_export?"wspp":"wsap",t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
+               t->ip_export?"isap":t->pf_export?"wspp":"wsap",t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
                a_count,p_count,sizes[0],sizes[1]);
     } else {
     printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"
@@ -280,7 +280,7 @@ int schedule_write(void)
                "\"reason\":\"虛擬範圍扣除有效範圍沒有 payload；原 packing、reward 與 read-slot 由目標表示取代，未產生原 ISA 實例\","
                "\"physical_children_expanded\":false}");
     }
-    for (int b = 0; b < (t->ip_export?6:batch_count); ++b) {
+    for (int b = 0; b < (t->ip_export?((int)target_stream_vectors(t)+1)/2*2:batch_count); ++b) {
         printf(",{\"id\":\"nop-batch-%d\",\"batch\":%d,\"source\":", b, b);
         source(t->ip_export?"is_process":"ws_process", batch_lines[b], "LEGACY_PROGRAM_WAIT");
         printf(",\"rule\":\"replace_packing_wait_with_program_dependency\","

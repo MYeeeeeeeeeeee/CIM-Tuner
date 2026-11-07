@@ -69,17 +69,18 @@ void a2a_process(void);
 int main(int argc, char *argv[]){
     if (argc > 1 && !strncmp(argv[1], "--", 2)) {
         if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
-            strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export") && strcmp(argv[1], "--target-f7-ip-pf-export") && strcmp(argv[1], "--target-f7-r-wp-af-export") && strcmp(argv[1], "--target-f7-r-wp-pf-export")) {
+            strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export") && strcmp(argv[1], "--target-f7-ip-pf-export") && strcmp(argv[1], "--target-f7-r-wp-af-export") && strcmp(argv[1], "--target-f7-r-wp-pf-export") && strcmp(argv[1], "--target-f7-r-ip-af-export")) {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
+        int rip = !strcmp(argv[1],"--target-f7-r-ip-af-export");
         int rpf = !strcmp(argv[1],"--target-f7-r-wp-pf-export");
-        int rotated = rpf || !strcmp(argv[1],"--target-f7-r-wp-af-export"), equal_mn=0;
+        int rotated = rip || rpf || !strcmp(argv[1],"--target-f7-r-wp-af-export"), equal_mn=0;
         for (int i=2;i<argc;++i) if (!strcmp(argv[i],"validationCase=equal_mn")) equal_mn=1;
         int pf = rpf || !strcmp(argv[1], "--target-f7-pf-export");
         int ippf = !strcmp(argv[1], "--target-f7-ip-pf-export");
-        int ip = ippf || !strcmp(argv[1], "--target-f7-ip-af-export");
-        int result = rpf ? target_parse_r_pf(argc-2,argv+2,&target) : rotated ? target_parse_r(argc-2,argv+2,&target,equal_mn) : ippf ? target_parse_ip_pf(argc - 2, argv + 2, &target) : ip ? target_parse_ip_af(argc - 2, argv + 2, &target) :
+        int ip = rip || ippf || !strcmp(argv[1], "--target-f7-ip-af-export");
+        int result = rip ? target_parse_r_ip_af(argc-2,argv+2,&target) : rpf ? target_parse_r_pf(argc-2,argv+2,&target) : rotated ? target_parse_r(argc-2,argv+2,&target,equal_mn) : ippf ? target_parse_ip_pf(argc - 2, argv + 2, &target) : ip ? target_parse_ip_af(argc - 2, argv + 2, &target) :
             pf ? target_parse_pf(argc - 2, argv + 2, &target) : target_parse(argc - 2, argv + 2, &target);
         if (result) return result;
         target_mode = 1;
