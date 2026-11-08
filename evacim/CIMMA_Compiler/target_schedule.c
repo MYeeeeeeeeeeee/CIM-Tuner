@@ -183,7 +183,7 @@ int schedule_write(void)
                "\"W\":{\"role\":\"streamed_weight\",\"shape\":[9,%llu],\"bits\":8,\"layout\":\"row_major\"},"
                "\"Y\":{\"role\":\"output\",\"shape\":[5,%llu],\"bits\":32,\"layout\":\"row_major\"}},"
                "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[%d,%d],\"source\":",
-               t->ip_export?"isap":t->pf_export?"wspp":"wsap",t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
+               t->ip_export?(t->pf_export?"ispp":"isap"):t->pf_export?"wspp":"wsap",t->candidate_sha256,t->tensor_sha256,t->proposal_sha256,(unsigned long long)t->n,(unsigned long long)t->n,
                a_count,p_count,sizes[0],sizes[1]);
     } else {
     printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,"
