@@ -10,14 +10,14 @@
 #include "target_config.h"
 #include "target_schedule.h"
 
-#define min(a,b) ((a) < (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
 #define WRITE_INST 0
 #define VERIFY 0
 
 int bus_width, al, pc, scr, is_depth, os_depth, freq;
-char* operation;
+char *operation;
 int dim1, dim2, dim3;
-char* data_stream;
+char *data_stream;
 
 hwc acc0;
 Config config;
@@ -32,7 +32,7 @@ int input_map_length, input_map_channel;
 int weight_block_col, weight_block_row, weight_block_num, weight_update_times_per_inst;
 int input_data_per_row, rows_per_input_channel, input_channels_per_ISload, IS_load_times_per_inst;
 int para_times, acc_times;
-int is_addr_record = 114514; //随便给了个不可能的初值input_map_position
+int is_addr_record = 114514; // 随便给了个不可能的初值input_map_position
 int input_map_position_record = 114514;
 int bus_is_width_ratio;
 int bus_wu_width_ratio;
@@ -40,11 +40,11 @@ int bus_wu_width_ratio;
 int gt_in_map_record;
 int os_virtual_depth;
 
-int* IS_load_rows;
-int* weight_update_ls;
+int *IS_load_rows;
+int *weight_update_ls;
 
-int** ls_matrix;
-int** atos_matrix;
+int **ls_matrix;
+int **atos_matrix;
 
 char item[100];
 
@@ -65,47 +65,66 @@ void proj_process(int a, int b, int c);
 void ph2_process(void);
 void lhd_process(void);
 void a2a_process(void);
-
-int main(int argc, char *argv[]){
-    if (argc > 1 && !strncmp(argv[1], "--", 2)) {
+    
+int main(int argc, char *argv[])
+{
+    if (argc > 1 && !strncmp(argv[1], "--", 2))
+    {
         if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
-            strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export") && strcmp(argv[1], "--target-f7-ip-pf-export") && strcmp(argv[1], "--target-f7-r-wp-af-export") && strcmp(argv[1], "--target-f7-r-wp-pf-export") && strcmp(argv[1], "--target-f7-r-ip-af-export") && strcmp(argv[1], "--target-f7-r-ip-pf-export")) {
+            strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export") && strcmp(argv[1], "--target-f7-ip-pf-export") && strcmp(argv[1], "--target-f7-r-wp-af-export") && strcmp(argv[1], "--target-f7-r-wp-pf-export") && strcmp(argv[1], "--target-f7-r-ip-af-export") && strcmp(argv[1], "--target-f7-r-ip-pf-export"))
+        {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
-        int rippf = !strcmp(argv[1],"--target-f7-r-ip-pf-export");
-        int rip = rippf || !strcmp(argv[1],"--target-f7-r-ip-af-export");
-        int rpf = !strcmp(argv[1],"--target-f7-r-wp-pf-export");
-        int rotated = rip || rpf || !strcmp(argv[1],"--target-f7-r-wp-af-export"), equal_mn=0;
-        for (int i=2;i<argc;++i) if (!strcmp(argv[i],"validationCase=equal_mn")) equal_mn=1;
+        int rippf = !strcmp(argv[1], "--target-f7-r-ip-pf-export");
+        int rip = rippf || !strcmp(argv[1], "--target-f7-r-ip-af-export");
+        int rpf = !strcmp(argv[1], "--target-f7-r-wp-pf-export");
+        int rotated = rip || rpf || !strcmp(argv[1], "--target-f7-r-wp-af-export"), equal_mn = 0;
+        for (int i = 2; i < argc; ++i)
+            if (!strcmp(argv[i], "validationCase=equal_mn"))
+                equal_mn = 1;
         int pf = rippf || rpf || !strcmp(argv[1], "--target-f7-pf-export");
         int ippf = rippf || !strcmp(argv[1], "--target-f7-ip-pf-export");
         int ip = rip || ippf || !strcmp(argv[1], "--target-f7-ip-af-export");
-        int result = rippf ? target_parse_r_ip_pf(argc-2,argv+2,&target) : rip ? target_parse_r_ip_af(argc-2,argv+2,&target) : rpf ? target_parse_r_pf(argc-2,argv+2,&target) : rotated ? target_parse_r(argc-2,argv+2,&target,equal_mn) : ippf ? target_parse_ip_pf(argc - 2, argv + 2, &target) : ip ? target_parse_ip_af(argc - 2, argv + 2, &target) :
-            pf ? target_parse_pf(argc - 2, argv + 2, &target) : target_parse(argc - 2, argv + 2, &target);
-        if (result) return result;
+        int result = rippf ? target_parse_r_ip_pf(argc - 2, argv + 2, &target) : rip   ? target_parse_r_ip_af(argc - 2, argv + 2, &target)
+                                                                             : rpf     ? target_parse_r_pf(argc - 2, argv + 2, &target)
+                                                                             : rotated ? target_parse_r(argc - 2, argv + 2, &target, equal_mn)
+                                                                             : ippf    ? target_parse_ip_pf(argc - 2, argv + 2, &target)
+                                                                             : ip      ? target_parse_ip_af(argc - 2, argv + 2, &target)
+                                                                             : pf      ? target_parse_pf(argc - 2, argv + 2, &target)
+                                                                                       : target_parse(argc - 2, argv + 2, &target);
+        if (result)
+            return result;
         target_mode = 1;
         target_export = rotated || ip || pf || !strcmp(argv[1], "--target-f7-export");
-        if (target_export) schedule_begin(&target);
+        if (target_export)
+            schedule_begin(&target);
         /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */
         config.AL = (int)(target.logicalRows * target.gridCols);
         config.PC = (int)(target.logicalCols * target.gridRows);
         config.SCR = (int)target.macroStorageSets;
         acc0.LocalSwitchrows = config.SCR;
-        data_stream = ippf ? "ispp" : ip ? "isap" : pf ? "wspp" : "wsap";
+        data_stream = ippf ? "ispp" : ip ? "isap"
+                                  : pf   ? "wspp"
+                                         : "wsap";
         proj_process((int)target_stored_lanes(&target), (int)target.k, (int)target_stream_vectors(&target));
         result = target_export ? target_validate(&target, acc_times, para_times,
-            weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix) :
-            target_diagnose(&target, acc_times, para_times,
-            weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix);
-        if (target_export && !result) {
-            if (!ip) ws_process();
-            else if (strcmp(data_stream,ippf ? "ispp" : "isap")) {
-                fprintf(stderr,"IP_BRANCH_MISMATCH requested=%s actual=%s\n",ippf ? "ispp" : "isap",data_stream); return 2;
+                                                 weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix)
+                               : target_diagnose(&target, acc_times, para_times,
+                                                 weight_update_times_per_inst, weight_update_ls, ls_matrix, atos_matrix);
+        if (target_export && !result)
+        {
+            if (!ip)
+                ws_process();
+            else if (strcmp(data_stream, ippf ? "ispp" : "isap"))
+            {
+                fprintf(stderr, "IP_BRANCH_MISMATCH requested=%s actual=%s\n", ippf ? "ispp" : "isap", data_stream);
+                return 2;
             }
             result = schedule_write();
         }
-        for (int i = 0; i < para_times; ++i) {
+        for (int i = 0; i < para_times; ++i)
+        {
             free(ls_matrix[i]);
             free(atos_matrix[i]);
         }
@@ -115,7 +134,8 @@ int main(int argc, char *argv[]){
         free(IS_load_rows);
         return result;
     }
-    if (argc != 13) {
+    if (argc != 13)
+    {
         printf("error!");
         return 1;
     }
@@ -134,7 +154,7 @@ int main(int argc, char *argv[]){
 
     dim1 = atoi(argv[9]);
     dim2 = atoi(argv[10]);
-    dim3 = atoi(argv[11]); 
+    dim3 = atoi(argv[11]);
 
     data_stream = argv[12];
 
@@ -149,12 +169,13 @@ int main(int argc, char *argv[]){
     log_init();
 
     if (strcmp(operation, "proj") == 0)
-        proj_process(dim1,dim2,dim3);
+        proj_process(dim1, dim2, dim3);
     else if (strcmp(operation, "a2a") == 0)
-            a2a_process();
-    
-    for (int i = 0; i < inst_stack.len; i++){
-        PushInstStack(&inst_stack,"",0,0);
+        a2a_process();
+
+    for (int i = 0; i < inst_stack.len; i++)
+    {
+        PushInstStack(&inst_stack, "", 0, 0);
     }
 
     // #region output
@@ -167,21 +188,26 @@ int main(int argc, char *argv[]){
     // 检查文件是否存在
     FILE *file = fopen("count.csv", "r");
     int needHeader = 0;
-    if (file == NULL) {
+    if (file == NULL)
+    {
         needHeader = 1; // 文件不存在，需要写入表头
-    } else {
+    }
+    else
+    {
         fclose(file); // 文件已存在，关闭文件
     }
 
     // 以追加模式打开文件，如果不存在则创建
     file = fopen("count.csv", "a");
-    if (file == NULL) {
+    if (file == NULL)
+    {
         perror("Failed to open csv file\n");
         return EXIT_FAILURE;
     }
 
     // 如果需要，写入表头
-    if (needHeader) {
+    if (needHeader)
+    {
         fprintf(file, "bus_width,al,pc,scr,is_depth,os_depth,freq,operation,dim1,dim2,dim3,data_stream,");
         fprintf(file, "Lin,Linp,Lwt,Lwtp,Cmpfis_aor,Cmpfis_tos,Cmpfis_aos,Cmpfis_ptos,Cmpfis_paos,");
         fprintf(file, "Cmpfgt_aor,Cmpfgt_tos,Cmpfgt_aos,Cmpfgt_ptos,Cmpfgt_paos,Cmpfgtp,Lpenalty,Nop,Nop_w_rd,");
@@ -200,15 +226,15 @@ int main(int argc, char *argv[]){
             instructionCount.Cmpfis_ptos, instructionCount.Cmpfis_paos,
             instructionCount.Cmpfgt_aor, instructionCount.Cmpfgt_tos, instructionCount.Cmpfgt_aos,
             instructionCount.Cmpfgt_ptos, instructionCount.Cmpfgt_paos,
-            instructionCount.Cmpfgtp, instructionCount.Lpenalty, instructionCount.Nop, instructionCount.Nop_w_rd, 
-            instructionCount.IS_reward,instructionCount.L2_reward,instructionCount.Fussion);
+            instructionCount.Cmpfgtp, instructionCount.Lpenalty, instructionCount.Nop, instructionCount.Nop_w_rd,
+            instructionCount.IS_reward, instructionCount.L2_reward, instructionCount.Fussion);
 
     // 关闭文件
     fclose(file);
 
-
     // //*******************************************清理*******************************************
-    for(int i = 0; i < para_times; ++i) {
+    for (int i = 0; i < para_times; ++i)
+    {
         free(ls_matrix[i]);
         free(atos_matrix[i]);
     }
@@ -220,59 +246,82 @@ int main(int argc, char *argv[]){
     return 0;
 }
 
-void log_init() {
+void log_init()
+{
     // Log initialization logic here
     char filepath[256];
     sprintf(filepath, "./Result/inst.txt");
 
-    if (access(filepath, F_OK) != -1) {
+    if (access(filepath, F_OK) != -1)
+    {
         // file exists
-        if (remove(filepath) == 0) {
-            //printf("Deleted successfully\n");
-        } else {
-            //printf("Unable to delete the file\n");
+        if (remove(filepath) == 0)
+        {
+            // printf("Deleted successfully\n");
         }
-    } else {
+        else
+        {
+            // printf("Unable to delete the file\n");
+        }
+    }
+    else
+    {
         // file doesn't exist
         // printf("File doesn't exist\n");
         FILE *file = fopen(filepath, "w");
-        if (file != NULL) {
+        if (file != NULL)
+        {
             fclose(file);
         }
     }
     PushInstStack(&inst_stack, "starting compiler:\n", 0, 0);
 }
 
-void idle(){
-    instructionCount.Nop++; 
-    if (WRITE_INST == 1){
+void idle()
+{
+    instructionCount.Nop++;
+    if (WRITE_INST == 1)
+    {
         PushInstStack(&inst_stack, "nop\n", 0, 0);
     }
-
 }
 
-int load_is_narrow_bus(int num_rows, int input_map_position) {
-    for (int i_rows = 0; i_rows < num_rows; ++i_rows) {
+int load_is_narrow_bus(int num_rows, int input_map_position)
+{
+    for (int i_rows = 0; i_rows < num_rows; ++i_rows)
+    {
         input_map_position += (config.BUS_WIDTH / config.DATA_WIDTH) * (acc0.InputSRAMWidth / acc0.BusWidth - 1);
-        for (int j_reg = acc0.InputSRAMWidth / acc0.BusWidth - 1; j_reg >= 0; --j_reg) {
-            if (j_reg != 0) {
+        for (int j_reg = acc0.InputSRAMWidth / acc0.BusWidth - 1; j_reg >= 0; --j_reg)
+        {
+            if (j_reg != 0)
+            {
                 instructionCount.Linp++;
-                if (WRITE_INST){
-                    if (VERIFY) {
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
                         sprintf(item, "Linp\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
+                    }
+                    else
+                    {
                         sprintf(item, "Linp\t <pos> %d\n", j_reg);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
                 }
-            } else {
+            }
+            else
+            {
                 instructionCount.Lin++;
-                if (WRITE_INST){
-                    if (VERIFY) {
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
                         sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
+                    }
+                    else
+                    {
                         sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\n", j_reg, i_rows);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
@@ -286,18 +335,25 @@ int load_is_narrow_bus(int num_rows, int input_map_position) {
     return input_map_position;
 }
 
-int load_is_wide_bus(int num_rows, int input_map_position) {
-    for (int i_rows = 0; i_rows < num_rows; ++i_rows) {
+int load_is_wide_bus(int num_rows, int input_map_position)
+{
+    for (int i_rows = 0; i_rows < num_rows; ++i_rows)
+    {
         input_map_position += acc0.InputSRAMWidth / config.DATA_WIDTH;
         instructionCount.Lin++;
-        if (i_rows % bus_is_width_ratio != 0) {
+        if (i_rows % bus_is_width_ratio != 0)
+        {
             instructionCount.L2_reward++;
         }
-        if (WRITE_INST){
-            if (VERIFY) {
+        if (WRITE_INST)
+        {
+            if (VERIFY)
+            {
                 sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", 0, i_rows, input_map_position);
                 PushInstStack(&inst_stack, item, 0, 0);
-            } else {
+            }
+            else
+            {
                 sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\n", 0, i_rows);
                 PushInstStack(&inst_stack, item, 0, 0);
             }
@@ -306,19 +362,23 @@ int load_is_wide_bus(int num_rows, int input_map_position) {
     return input_map_position;
 }
 
-int load_is_block(int num_rows, int input_map_position){
-    if (target_mode && target.ip_export) {
+int load_is_block(int num_rows, int input_map_position)
+{
+    if (target_mode && target.ip_export)
+    {
         /* 目標模式的實際單位是有效vector；不把原packed rows當有效bytes。 */
         const int first = input_map_position / 9;
-        const int vectors = input_map_channel-first < input_channels_per_ISload ?
-            input_map_channel-first : input_channels_per_ISload;
-        schedule_ip_cache(first,vectors,0,__func__,__LINE__); /* IP_CACHE_FILL */
-        return input_map_position+vectors*9;
+        const int vectors = input_map_channel - first < input_channels_per_ISload ? input_map_channel - first : input_channels_per_ISload;
+        schedule_ip_cache(first, vectors, 0, __func__, __LINE__); /* IP_CACHE_FILL */
+        return input_map_position + vectors * 9;
     }
     bus_is_width_ratio = config.BUS_WIDTH / acc0.InputSRAMWidth;
-    if (bus_is_width_ratio == 0) {
+    if (bus_is_width_ratio == 0)
+    {
         return load_is_narrow_bus(num_rows, input_map_position);
-    } else {
+    }
+    else
+    {
         return load_is_wide_bus(num_rows, input_map_position);
     }
 }
@@ -326,92 +386,121 @@ int load_is_block(int num_rows, int input_map_position){
 /* 共用原 AF／PF 的 block 座標決策；不建立另一套策略。 */
 static void block_coordinates(int block, int *p, int *a)
 {
-    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
+    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0)
+    {
         *p = block / weight_block_col;
         *a = block % weight_block_col;
-    } else {
+    }
+    else
+    {
         *p = block % weight_block_row;
         *a = block / weight_block_row;
     }
 }
 
-void wu_ls_narrow_bus(int i_ls, int num_channel, int i_pt, int i_at) {
-        for (int j_channel = 0; j_channel < num_channel; j_channel++) {
-            int i_weight_channel = i_pt * config.PC + j_channel;
-            int j_data_in_channel = i_at * config.AL;
-            int weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel;
-            
-            for (int k_reg = acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--) {
-                weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel + k_reg * acc0.BusWidth / config.DATA_WIDTH;
-                int row_reg = (acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (acc0.CIMsWriteWidth / acc0.BusWidth);
-                int pause_reg = k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth);
+void wu_ls_narrow_bus(int i_ls, int num_channel, int i_pt, int i_at)
+{
+    for (int j_channel = 0; j_channel < num_channel; j_channel++)
+    {
+        int i_weight_channel = i_pt * config.PC + j_channel;
+        int j_data_in_channel = i_at * config.AL;
+        int weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel;
 
-                if (pause_reg == 0) {
-                    instructionCount.Lwt++;
-                    if (WRITE_INST) {
-                        if (VERIFY) {
-                            sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
-                            PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
-                            sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls);
-                            PushInstStack(&inst_stack, item, 0, 0);
-                        }
-                    }
-                } else {
-                    instructionCount.Lwtp++;
-                    if (WRITE_INST) {
-                        if (VERIFY) {
-                            sprintf(item, "Lwtp\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
-                            PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
-                            sprintf(item, "Lwtp\t <pos> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth));
-                            PushInstStack(&inst_stack, item, 0, 0);
-                        }
-                    }
-                }
-            }
-        }
-}
+        for (int k_reg = acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--)
+        {
+            weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel + k_reg * acc0.BusWidth / config.DATA_WIDTH;
+            int row_reg = (acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (acc0.CIMsWriteWidth / acc0.BusWidth);
+            int pause_reg = k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth);
 
-void wu_ls_wide_bus(int i_ls, int num_channel, int i_pt, int i_at) {
-    (void)i_ls;
-        for (int j_channel = 0; j_channel < num_channel; j_channel++) {
-            int i_weight_channel = i_pt * config.PC + j_channel;
-            int j_data_in_channel = i_at * config.AL;
-            int weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel;
-            
-            for (int k_reg = config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--) {
-                // weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel + k_reg * acc0.BusWidth / config.DATA_WIDTH;
-                // 完全裂开了，验证不了一点
-                // int row_reg = (acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (acc0.CIMsWriteWidth / acc0.BusWidth);
+            if (pause_reg == 0)
+            {
                 instructionCount.Lwt++;
-                if (k_reg >= config.WEIGHT_ROW / bus_wu_width_ratio) {
-                    instructionCount.L2_reward++;
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
+                        sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
+                        PushInstStack(&inst_stack, item, 0, 0);
+                    }
+                    else
+                    {
+                        sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls);
+                        PushInstStack(&inst_stack, item, 0, 0);
+                    }
                 }
-
-                // if (WRITE_INST) {
-                //     if (VERIFY) {
-                //         sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
-                //         PushInstStack(&inst_stack, item, 0, 0);
-                //     } else {
-                //         sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls);
-                //         PushInstStack(&inst_stack, item, 0, 0);
-                //     }
-                // }
+            }
+            else
+            {
+                instructionCount.Lwtp++;
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
+                        sprintf(item, "Lwtp\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
+                        PushInstStack(&inst_stack, item, 0, 0);
+                    }
+                    else
+                    {
+                        sprintf(item, "Lwtp\t <pos> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth));
+                        PushInstStack(&inst_stack, item, 0, 0);
+                    }
+                }
             }
         }
+    }
 }
 
-int wu_ls_bank(int num_ls, int num_channel, int i_block){
-    if (!target_export) bus_wu_width_ratio = config.BUS_WIDTH / config.CIMsWriteWidth;
-    for (int i_ls = 0; i_ls < num_ls; ++i_ls) {
+void wu_ls_wide_bus(int i_ls, int num_channel, int i_pt, int i_at)
+{
+    (void)i_ls;
+    for (int j_channel = 0; j_channel < num_channel; j_channel++)
+    {
+        int i_weight_channel = i_pt * config.PC + j_channel;
+        int j_data_in_channel = i_at * config.AL;
+        int weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel;
+
+        for (int k_reg = config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--)
+        {
+            // weight_map_position = i_weight_channel * weight_map_length + j_data_in_channel + k_reg * acc0.BusWidth / config.DATA_WIDTH;
+            // 完全裂开了，验证不了一点
+            // int row_reg = (acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (acc0.CIMsWriteWidth / acc0.BusWidth);
+            instructionCount.Lwt++;
+            if (k_reg >= config.WEIGHT_ROW / bus_wu_width_ratio)
+            {
+                instructionCount.L2_reward++;
+            }
+
+            // if (WRITE_INST) {
+            //     if (VERIFY) {
+            //         sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <weight_map> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls, weight_map_position);
+            //         PushInstStack(&inst_stack, item, 0, 0);
+            //     } else {
+            //         sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\n", k_reg % (acc0.CIMsWriteWidth / acc0.BusWidth), j_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + i_ls);
+            //         PushInstStack(&inst_stack, item, 0, 0);
+            //     }
+            // }
+        }
+    }
+}
+
+int wu_ls_bank(int num_ls, int num_channel, int i_block)
+{
+    if (!target_export)
+        bus_wu_width_ratio = config.BUS_WIDTH / config.CIMsWriteWidth;
+    for (int i_ls = 0; i_ls < num_ls; ++i_ls)
+    {
         int i_pt, i_at;
         block_coordinates(i_block, &i_pt, &i_at);
-        if (target_export) {
+        if (target_export)
+        {
             schedule_program(i_pt, i_at, i_ls, __func__, __LINE__); /* A2B_PROGRAM */
-        } else if (bus_wu_width_ratio == 0) {
+        }
+        else if (bus_wu_width_ratio == 0)
+        {
             wu_ls_narrow_bus(i_ls, num_channel, i_pt, i_at);
-        } else {
+        }
+        else
+        {
             wu_ls_wide_bus(i_ls, num_channel, i_pt, i_at);
         }
         i_block += 1;
@@ -419,10 +508,11 @@ int wu_ls_bank(int num_ls, int num_channel, int i_block){
     return i_block;
 }
 
-void compute(int i_input_channel, int computing_block,int fussion_flag) {
+void compute(int i_input_channel, int computing_block, int fussion_flag)
+{
     int i_ls = computing_block % config.SCR;
     int i_pt, i_at, is_addr, os_addr, input_map_position, j_reg;
-    
+
     block_coordinates(computing_block, &i_pt, &i_at);
 
     int atos_flag = atos_matrix[i_pt][i_at];
@@ -430,19 +520,28 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
     os_addr = i_input_channel * para_times + i_pt;
     const int direct_source = (strcmp(data_stream, "wsap") == 0 || strcmp(data_stream, "wspp") == 0) &&
                               i_input_channel >= input_channels_per_ISload;
-    if (target_export) {
-        if (direct_source) {
+    if (target_export)
+    {
+        if (direct_source)
+        {
             schedule_read(i_input_channel, i_pt, i_at, 1, __func__, __LINE__); /* A2B_DIRECT */
-        } else {
+        }
+        else
+        {
             schedule_read(i_input_channel, i_pt, i_at, 0, __func__, __LINE__); /* A2B_CACHED */
         }
-        if (atos_flag == 0) {
+        if (atos_flag == 0)
+        {
             schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
                              __func__, __LINE__); /* A2B_AOR */
-        } else if (atos_flag == 2) {
+        }
+        else if (atos_flag == 2)
+        {
             schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
                              __func__, __LINE__); /* A2B_AOS */
-        } else {
+        }
+        else
+        {
             schedule_compute(i_input_channel, i_pt, i_at, i_ls, atos_flag, os_addr,
                              __func__, __LINE__); /* A2B_TOS */
         }
@@ -450,34 +549,48 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
     }
     // if (fussion_flag) os_addr = i_input_channel * Spv + (i_pt - Sqk) % Spv + ;
 
-    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "ispp") == 0) {
+    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "ispp") == 0)
+    {
         is_addr = (i_input_channel % input_channels_per_ISload) * rows_per_input_channel + i_at;
-    } else if (strcmp(data_stream, "wsap") == 0 || strcmp(data_stream, "wspp") == 0) {
+    }
+    else if (strcmp(data_stream, "wsap") == 0 || strcmp(data_stream, "wspp") == 0)
+    {
         is_addr = i_input_channel * rows_per_input_channel + i_at;
     }
 
-    if (direct_source) { // Cmpfgt & Cmpfgtp
-    //  这里是bus wide的情况
-        if (bus_is_width_ratio >= 1){
+    if (direct_source)
+    {   // Cmpfgt & Cmpfgtp
+        //  这里是bus wide的情况
+        if (bus_is_width_ratio >= 1)
+        {
             input_map_position = i_input_channel * input_map_length + i_at * config.AL;
-            if(input_map_position / bus_is_width_ratio == input_map_position_record / bus_is_width_ratio && !fussion_flag) instructionCount.L2_reward++;
+            if (input_map_position / bus_is_width_ratio == input_map_position_record / bus_is_width_ratio && !fussion_flag)
+                instructionCount.L2_reward++;
             input_map_position_record = input_map_position;
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-            if (atos_flag == 2) {
-                if (os_addr >= os_virtual_depth) { // aos, os overflow
-                    if (i_at == acc_times - 1) {
+            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            if (atos_flag == 2)
+            {
+                if (os_addr >= os_virtual_depth)
+                { // aos, os overflow
+                    if (i_at == acc_times - 1)
+                    {
                         os_virtual_depth += 1;
                     }
                     instructionCount.Cmpfgt_paos++;
-                    instructionCount.Lpenalty+=ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
-                    if (WRITE_INST){
-                        if (VERIFY) {
+                    instructionCount.Lpenalty += ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
+                    if (WRITE_INST)
+                    {
+                        if (VERIFY)
+                        {
                             sprintf(item, "Lpenalty\t <os_addr_rd>\t %d\n", os_addr);
                             PushInstStack(&inst_stack, item, 0, 0);
                             sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                             PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
-                            for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++) {
+                        }
+                        else
+                        {
+                            for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++)
+                            {
                                 sprintf(item, "Lpenalty\t\n");
                                 PushInstStack(&inst_stack, item, 0, 0);
                             }
@@ -485,8 +598,11 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                             PushInstStack(&inst_stack, item, 0, 0);
                         }
                     }
-                } else { // aos, os not overflow
-                    if (i_at == acc_times - 1) {
+                }
+                else
+                { // aos, os not overflow
+                    if (i_at == acc_times - 1)
+                    {
                         os_virtual_depth += 1;
                         instructionCount.Cmpfgt_paos++;
                         // if (fussion_flag){
@@ -502,17 +618,22 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                         //     }
                         //     return;
                         // }
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                 PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
-                            } else {
+                            }
+                            else
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <paos>\n", j_reg, i_ls);
                                 PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
                             }
                         }
                     }
-                    else {
+                    else
+                    {
                         instructionCount.Cmpfgt_aos++;
                         // if (fussion_flag){
                         //     instructionCount.Fussion++;
@@ -527,13 +648,17 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                         //     }
                         //     return;
                         // }
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
-                                PushInstStack(&inst_stack, item, 1, os_addr); 
-                            } else {
+                                PushInstStack(&inst_stack, item, 1, os_addr);
+                            }
+                            else
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", j_reg, i_ls, os_addr);
-                                PushInstStack(&inst_stack, item, 1, os_addr); 
+                                PushInstStack(&inst_stack, item, 1, os_addr);
                             }
                         }
                     }
@@ -541,10 +666,12 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                 }
                 // Additional conditions and corresponding fprintf statements should be added here as per the Python logic
             }
-            
-            if (atos_flag == 1){
-                if (os_addr >= os_virtual_depth){    // tos, os overflow
-                    if (i_at == acc_times-1)    // complete one output, gen rd request, aos: paos(go through)
+
+            if (atos_flag == 1)
+            {
+                if (os_addr >= os_virtual_depth)
+                {                              // tos, os overflow
+                    if (i_at == acc_times - 1) // complete one output, gen rd request, aos: paos(go through)
                         os_virtual_depth += 1;
                     instructionCount.Cmpfgt_ptos++;
                     // if (fussion_flag){
@@ -560,18 +687,24 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                     //     }
                     //     return;
                     // }
-                    if (WRITE_INST){
-                        if (VERIFY) {
+                    if (WRITE_INST)
+                    {
+                        if (VERIFY)
+                        {
                             sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                             PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
+                        }
+                        else
+                        {
                             sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <ptos>\n", j_reg, i_ls);
                             PushInstStack(&inst_stack, item, 0, 0);
                         }
                     }
                 }
-                else{    // tos, os not overflow
-                    if (i_at == acc_times-1){ //gen rd request
+                else
+                { // tos, os not overflow
+                    if (i_at == acc_times - 1)
+                    { // gen rd request
                         os_virtual_depth += 1;
                         instructionCount.Cmpfgt_ptos++;
                         // if (fussion_flag){
@@ -587,17 +720,22 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                         //     }
                         //     return;
                         // }
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
-                            } else {
+                            }
+                            else
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <ptos>\n", j_reg, i_ls);
                                 PushInstStack(&inst_stack, item, 0, 0);
                             }
                         }
                     }
-                    else{
+                    else
+                    {
                         instructionCount.Cmpfgt_tos++;
                         // if (fussion_flag){
                         //     instructionCount.Fussion++;
@@ -612,11 +750,15 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                         //     }
                         //     return;
                         // }
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <%d>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, atos_flag, os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
-                            } else {
+                            }
+                            else
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <tos>\t <os_addr_wt> %d\n", j_reg, i_ls, os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
                             }
@@ -625,7 +767,8 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                 }
             }
 
-            if (atos_flag == 0){
+            if (atos_flag == 0)
+            {
                 instructionCount.Cmpfgt_aor++;
                 // if (fussion_flag){
                 //     instructionCount.Fussion++;
@@ -635,11 +778,15 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                 //     }
                 //     return;
                 // }
-                if (WRITE_INST){
-                    if (VERIFY) {
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
                         sprintf(item, "Cmpfgt\t <pos> \t%d\t<ca> %d\t <aor>\t <input_map_position>\t%d\n", j_reg, i_ls, input_map_position);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
+                    }
+                    else
+                    {
                         sprintf(item, "Cmpfgt\t <pos> \t%d\t<ca> %d\t <aor>\n", j_reg, i_ls);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
@@ -647,57 +794,75 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
             }
             ////////////////////////////////////////////////////////////////////////
 
-
             return;
         }
 
-    //  这里是bus narrow的情况
+        //  这里是bus narrow的情况
         input_map_position = i_input_channel * input_map_length + i_at * config.AL + (config.BUS_WIDTH / config.DATA_WIDTH) * (acc0.InputSRAMWidth / acc0.BusWidth - 1);
-        
+
         // if (is_addr == is_addr_record && !fussion_flag) instructionCount.L2_reward++;
         // is_addr_record = is_addr;
 
-        for (j_reg = acc0.InputSRAMWidth / acc0.BusWidth - 1; j_reg >= 0; j_reg--) {
-            
-            if ((gt_in_map_record / (acc0.InputSRAMWidth / config.DATA_WIDTH)) == (input_map_position / (acc0.InputSRAMWidth / config.DATA_WIDTH)) && (i_ls != 0) && j_reg != 0) {
+        for (j_reg = acc0.InputSRAMWidth / acc0.BusWidth - 1; j_reg >= 0; j_reg--)
+        {
+
+            if ((gt_in_map_record / (acc0.InputSRAMWidth / config.DATA_WIDTH)) == (input_map_position / (acc0.InputSRAMWidth / config.DATA_WIDTH)) && (i_ls != 0) && j_reg != 0)
+            {
                 // 当前位置跟上次算的位置一样 && 不是第一组(第一组需要数据进来) && 不是最后一个（最后一个需要计算）
                 input_map_position -= config.BUS_WIDTH / config.DATA_WIDTH;
                 continue;
             }
 
-            if (j_reg != 0) {   // Cmpfgtp
+            if (j_reg != 0)
+            { // Cmpfgtp
                 instructionCount.Cmpfgtp++;
-                if (VERIFY) {
-                    if (WRITE_INST) {
+                if (VERIFY)
+                {
+                    if (WRITE_INST)
+                    {
                         sprintf(item, "Cmpfgtp\t <pos> \t%d\t<input_map_position>\t%d\n", j_reg, input_map_position);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
-                } else {
-                    if (WRITE_INST) {
+                }
+                else
+                {
+                    if (WRITE_INST)
+                    {
                         sprintf(item, "Cmpfgtp\t <pos> \t%d\n", j_reg);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
                 }
-                input_map_position_record = input_map_position;///???
+                input_map_position_record = input_map_position; ///???
                 input_map_position -= config.BUS_WIDTH / config.DATA_WIDTH;
-            } else {            // Cmpfgt
-                if (input_map_position == input_map_position_record && !fussion_flag) instructionCount.L2_reward++;
-                input_map_position_record = input_map_position;///???
-                if (atos_flag == 2) {
-                    if (os_addr >= os_virtual_depth) { // aos, os overflow
-                        if (i_at == acc_times - 1) {
+            }
+            else
+            { // Cmpfgt
+                if (input_map_position == input_map_position_record && !fussion_flag)
+                    instructionCount.L2_reward++;
+                input_map_position_record = input_map_position; ///???
+                if (atos_flag == 2)
+                {
+                    if (os_addr >= os_virtual_depth)
+                    { // aos, os overflow
+                        if (i_at == acc_times - 1)
+                        {
                             os_virtual_depth += 1;
                         }
                         instructionCount.Cmpfgt_paos++;
-                        instructionCount.Lpenalty+=ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        instructionCount.Lpenalty += ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Lpenalty\t <os_addr_rd>\t %d\n", os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
-                            } else {
-                                for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++) {
+                            }
+                            else
+                            {
+                                for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++)
+                                {
                                     sprintf(item, "Lpenalty\t\n");
                                     PushInstStack(&inst_stack, item, 0, 0);
                                 }
@@ -705,55 +870,77 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                                 PushInstStack(&inst_stack, item, 0, 0);
                             }
                         }
-                    } else { // aos, os not overflow
-                        if (i_at == acc_times - 1) {
+                    }
+                    else
+                    { // aos, os not overflow
+                        if (i_at == acc_times - 1)
+                        {
                             os_virtual_depth += 1;
                             instructionCount.Cmpfgt_paos++;
-                            if (fussion_flag){
+                            if (fussion_flag)
+                            {
                                 instructionCount.Fussion++;
-                                if (WRITE_INST){
-                                    if (VERIFY) {
+                                if (WRITE_INST)
+                                {
+                                    if (VERIFY)
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", i_input_channel, i_ls, os_addr);
                                         PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
-                                    } else {
+                                    }
+                                    else
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <paos>\n", i_input_channel, i_ls);
                                         PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
                                     }
                                 }
                                 return;
                             }
-                            if (WRITE_INST){
-                                if (VERIFY) {
+                            if (WRITE_INST)
+                            {
+                                if (VERIFY)
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                     PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
-                                } else {
+                                }
+                                else
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <paos>\n", j_reg, i_ls);
                                     PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
                                 }
                             }
                         }
-                        else {
+                        else
+                        {
                             instructionCount.Cmpfgt_aos++;
-                            if (fussion_flag){
+                            if (fussion_flag)
+                            {
                                 instructionCount.Fussion++;
-                                if (WRITE_INST){
-                                    if (VERIFY) {
+                                if (WRITE_INST)
+                                {
+                                    if (VERIFY)
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", i_input_channel, i_ls, os_addr);
                                         PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
-                                    } else {
+                                    }
+                                    else
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <aos>\n", i_input_channel, i_ls);
                                         PushInstStack(&inst_stack, item, 1, os_addr); // virtual -> practical?
                                     }
                                 }
                                 return;
                             }
-                            if (WRITE_INST){
-                                if (VERIFY) {
+                            if (WRITE_INST)
+                            {
+                                if (VERIFY)
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
-                                    PushInstStack(&inst_stack, item, 1, os_addr); 
-                                } else {
+                                    PushInstStack(&inst_stack, item, 1, os_addr);
+                                }
+                                else
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", j_reg, i_ls, os_addr);
-                                    PushInstStack(&inst_stack, item, 1, os_addr); 
+                                    PushInstStack(&inst_stack, item, 1, os_addr);
                                 }
                             }
                         }
@@ -761,82 +948,114 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                     }
                     // Additional conditions and corresponding fprintf statements should be added here as per the Python logic
                 }
-                
-                if (atos_flag == 1){
-                    if (os_addr >= os_virtual_depth){    // tos, os overflow
-                        if (i_at == acc_times-1)    // complete one output, gen rd request, aos: paos(go through)
+
+                if (atos_flag == 1)
+                {
+                    if (os_addr >= os_virtual_depth)
+                    {                              // tos, os overflow
+                        if (i_at == acc_times - 1) // complete one output, gen rd request, aos: paos(go through)
                             os_virtual_depth += 1;
                         instructionCount.Cmpfgt_ptos++;
-                        if (fussion_flag){
+                        if (fussion_flag)
+                        {
                             instructionCount.Fussion++;
-                            if (WRITE_INST){
-                                if (VERIFY) {
+                            if (WRITE_INST)
+                            {
+                                if (VERIFY)
+                                {
                                     sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", i_input_channel, i_ls, os_addr);
                                     PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
-                                } else {
+                                }
+                                else
+                                {
                                     sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <ptos>\n", i_input_channel, i_ls);
                                     PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
                                 }
                             }
                             return;
                         }
-                        if (WRITE_INST){
-                            if (VERIFY) {
+                        if (WRITE_INST)
+                        {
+                            if (VERIFY)
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                 PushInstStack(&inst_stack, item, 0, 0);
-                            } else {
+                            }
+                            else
+                            {
                                 sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <ptos>\n", j_reg, i_ls);
                                 PushInstStack(&inst_stack, item, 0, 0);
                             }
                         }
                     }
-                    else{    // tos, os not overflow
-                        if (i_at == acc_times-1){ //gen rd request
+                    else
+                    { // tos, os not overflow
+                        if (i_at == acc_times - 1)
+                        { // gen rd request
                             os_virtual_depth += 1;
                             instructionCount.Cmpfgt_ptos++;
-                            if (fussion_flag){
+                            if (fussion_flag)
+                            {
                                 instructionCount.Fussion++;
-                                if (WRITE_INST){
-                                    if (VERIFY) {
+                                if (WRITE_INST)
+                                {
+                                    if (VERIFY)
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", i_input_channel, i_ls, os_addr);
                                         PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
-                                    } else {
+                                    }
+                                    else
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <ptos>\n", i_input_channel, i_ls);
                                         PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
                                     }
                                 }
                                 return;
                             }
-                            if (WRITE_INST){
-                                if (VERIFY) {
+                            if (WRITE_INST)
+                            {
+                                if (VERIFY)
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, os_addr);
                                     PushInstStack(&inst_stack, item, 0, 0);
-                                } else {
+                                }
+                                else
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <ptos>\n", j_reg, i_ls);
                                     PushInstStack(&inst_stack, item, 0, 0);
                                 }
                             }
                         }
-                        else{
+                        else
+                        {
                             instructionCount.Cmpfgt_tos++;
-                            if (fussion_flag){
+                            if (fussion_flag)
+                            {
                                 instructionCount.Fussion++;
-                                if (WRITE_INST){
-                                    if (VERIFY) {
+                                if (WRITE_INST)
+                                {
+                                    if (VERIFY)
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <tos>\t <os_addr_wt> %d\n", i_input_channel, i_ls, os_addr);
                                         PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
-                                    } else {
+                                    }
+                                    else
+                                    {
                                         sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <tos>\n", i_input_channel, i_ls);
                                         PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
                                     }
                                 }
                                 return;
                             }
-                            if (WRITE_INST){
-                                if (VERIFY) {
+                            if (WRITE_INST)
+                            {
+                                if (VERIFY)
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t<input_map_position>\t%d\t <ca> %d\t <%d>\t <os_addr_wt> %d\n", j_reg, input_map_position, i_ls, atos_flag, os_addr);
                                     PushInstStack(&inst_stack, item, 0, 0);
-                                } else {
+                                }
+                                else
+                                {
                                     sprintf(item, "Cmpfgt\t <pos> \t%d\t <ca> %d\t <tos>\t <os_addr_wt> %d\n", j_reg, i_ls, os_addr);
                                     PushInstStack(&inst_stack, item, 0, 0);
                                 }
@@ -845,21 +1064,28 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                     }
                 }
 
-                if (atos_flag == 0){
+                if (atos_flag == 0)
+                {
                     instructionCount.Cmpfgt_aor++;
-                    if (fussion_flag){
+                    if (fussion_flag)
+                    {
                         instructionCount.Fussion++;
-                        if (WRITE_INST){
+                        if (WRITE_INST)
+                        {
                             sprintf(item, "Cmpfgt\t <fus> \t%d\t <ca> %d\t <aor>\n", i_input_channel, i_ls);
                             PushInstStack(&inst_stack, item, 0, 0); // virtual -> practical?
                         }
                         return;
                     }
-                    if (WRITE_INST){
-                        if (VERIFY) {
+                    if (WRITE_INST)
+                    {
+                        if (VERIFY)
+                        {
                             sprintf(item, "Cmpfgt\t <pos> \t%d\t<ca> %d\t <aor>\t <input_map_position>\t%d\n", j_reg, i_ls, input_map_position);
                             PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
+                        }
+                        else
+                        {
                             sprintf(item, "Cmpfgt\t <pos> \t%d\t<ca> %d\t <aor>\n", j_reg, i_ls);
                             PushInstStack(&inst_stack, item, 0, 0);
                         }
@@ -870,25 +1096,35 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
         gt_in_map_record = input_map_position;
     }
 
-    else{   // Cmpfis
-        if (is_addr == is_addr_record) instructionCount.IS_reward++;
-            is_addr_record = is_addr;
+    else
+    { // Cmpfis
+        if (is_addr == is_addr_record)
+            instructionCount.IS_reward++;
+        is_addr_record = is_addr;
 
-        if (atos_flag == 2) { //aos
-            if (os_addr >= os_virtual_depth) {   // aos, os overflow
-                if (i_at == acc_times-1) {
+        if (atos_flag == 2)
+        { // aos
+            if (os_addr >= os_virtual_depth)
+            { // aos, os overflow
+                if (i_at == acc_times - 1)
+                {
                     os_virtual_depth += 1;
                 }
                 instructionCount.Cmpfis_paos++;
-                instructionCount.Lpenalty+=ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
-                if (WRITE_INST){
-                    if (VERIFY) {
+                instructionCount.Lpenalty += ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH);
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
                         sprintf(item, "Lpenalty\t <os_addr_rd>\t %d\n", os_addr);
                         PushInstStack(&inst_stack, item, 0, 0);
                         sprintf(item, "Cmpfis\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", i_ls, os_addr);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
-                        for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++) {
+                    }
+                    else
+                    {
+                        for (int i = 0; i < ceil((float)acc0.OutputSRAMWidth / (config.RESULT_WIDTH / config.DATA_WIDTH) / config.BUS_WIDTH); i++)
+                        {
                             sprintf(item, "Lpenalty\t\n");
                             PushInstStack(&inst_stack, item, 0, 0);
                         }
@@ -896,23 +1132,32 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
                 }
-            } else {                             // aos, os not overflow
-                if (i_at == acc_times - 1) {
+            }
+            else
+            { // aos, os not overflow
+                if (i_at == acc_times - 1)
+                {
                     os_virtual_depth += 1;
                     instructionCount.Cmpfis_paos++;
-                    if (WRITE_INST){
-                        if (VERIFY) {
+                    if (WRITE_INST)
+                    {
+                        if (VERIFY)
+                        {
                             sprintf(item, "Cmpfis\t <ca> %d\t <paos>\t <os_addr_wt> %d\n", i_ls, os_addr);
                             PushInstStack(&inst_stack, item, 1, os_addr);
-                        } else {
+                        }
+                        else
+                        {
                             sprintf(item, "Cmpfis\t <ca> %d\t <paos>\n", i_ls);
                             PushInstStack(&inst_stack, item, 1, os_addr);
                         }
                     }
                 }
-                else {
+                else
+                {
                     instructionCount.Cmpfis_aos++;
-                    if (WRITE_INST){
+                    if (WRITE_INST)
+                    {
                         sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <aos>\t <os_addr_wt> %d\n", is_addr, i_ls, os_addr);
                         PushInstStack(&inst_stack, item, 1, os_addr);
                     }
@@ -921,48 +1166,64 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
             }
         }
 
-        if (atos_flag == 1){
-            if (os_addr >= os_virtual_depth){    // tos, os overflow
-                if (i_at == acc_times-1)    // complete one output, gen rd request, aos: paos(go through)
+        if (atos_flag == 1)
+        {
+            if (os_addr >= os_virtual_depth)
+            {                              // tos, os overflow
+                if (i_at == acc_times - 1) // complete one output, gen rd request, aos: paos(go through)
                     os_virtual_depth += 1;
                 instructionCount.Cmpfis_ptos++;
-                if (WRITE_INST){
-                    if (VERIFY) {
+                if (WRITE_INST)
+                {
+                    if (VERIFY)
+                    {
                         sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", is_addr, i_ls, os_addr);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
+                    }
+                    else
+                    {
                         sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <ptos>\n", is_addr, i_ls);
                         PushInstStack(&inst_stack, item, 0, 0);
                     }
                 }
             }
-            else{    // tos, os not overflow
-                if (i_at == acc_times-1){ //gen rd request
+            else
+            { // tos, os not overflow
+                if (i_at == acc_times - 1)
+                { // gen rd request
                     os_virtual_depth += 1;
                     instructionCount.Cmpfis_ptos++;
-                    if (WRITE_INST){
-                        if (VERIFY) {
+                    if (WRITE_INST)
+                    {
+                        if (VERIFY)
+                        {
                             sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <ptos>\t <os_addr_wt> %d\n", is_addr, i_ls, os_addr);
                             PushInstStack(&inst_stack, item, 0, 0);
-                        } else {
+                        }
+                        else
+                        {
                             sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <ptos>\n", is_addr, i_ls);
                             PushInstStack(&inst_stack, item, 0, 0);
                         }
                     }
                 }
-                else{
+                else
+                {
                     instructionCount.Cmpfis_tos++;
-                    if (WRITE_INST){
+                    if (WRITE_INST)
+                    {
                         sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <tos>\t <os_addr_wt> %d\n", is_addr, i_ls, os_addr);
                         PushInstStack(&inst_stack, item, 0, 0);
-                    }   
+                    }
                 }
             }
         }
 
-        if (atos_flag == 0){
+        if (atos_flag == 0)
+        {
             instructionCount.Cmpfis_aor++;
-            if (WRITE_INST){
+            if (WRITE_INST)
+            {
                 sprintf(item, "Cmpfis\t <is_addr> %d\t <ca> %d\t <aor>\n", is_addr, i_ls);
                 PushInstStack(&inst_stack, item, 0, 0);
             }
@@ -970,19 +1231,25 @@ void compute(int i_input_channel, int computing_block,int fussion_flag) {
     }
 }
 
-void is_process(void) {
+void is_process(void)
+{
     int input_map_position = 0;
     int i_block = 0;
 
-    if (IS_load_times_per_inst == 0){
-        if (target_mode) {
-            fprintf(stderr,"IP_FALLBACK_FORBIDDEN requested=%s IS_load_times_per_inst=0\n",target.pf_export ? "ispp" : "isap");
+    if (IS_load_times_per_inst == 0)
+    {
+        if (target_mode)
+        {
+            fprintf(stderr, "IP_FALLBACK_FORBIDDEN requested=%s IS_load_times_per_inst=0\n", target.pf_export ? "ispp" : "isap");
             return;
         }
-        if (strcmp(data_stream, "isap") == 0)   strcpy(data_stream, "wsap");
-        if (strcmp(data_stream, "ispp") == 0)   strcpy(data_stream, "wspp");
+        if (strcmp(data_stream, "isap") == 0)
+            strcpy(data_stream, "wsap");
+        if (strcmp(data_stream, "ispp") == 0)
+            strcpy(data_stream, "wspp");
 
-        for(int i = 0; i < para_times; ++i) {
+        for (int i = 0; i < para_times; ++i)
+        {
             free(ls_matrix[i]);
             free(atos_matrix[i]);
         }
@@ -991,33 +1258,38 @@ void is_process(void) {
         free(weight_update_ls);
         free(IS_load_rows);
 
-        proj_process(dim1,dim2,dim3);
+        proj_process(dim1, dim2, dim3);
 
         return;
     }
 
-    for (int i_IS_load = 0; i_IS_load < IS_load_times_per_inst; i_IS_load++) {
-        const int first = i_IS_load*input_channels_per_ISload;
-        const int vectors = target_mode ? (input_map_channel-first < input_channels_per_ISload ?
-            input_map_channel-first : input_channels_per_ISload) : IS_load_rows[i_IS_load]/rows_per_input_channel;
+    for (int i_IS_load = 0; i_IS_load < IS_load_times_per_inst; i_IS_load++)
+    {
+        const int first = i_IS_load * input_channels_per_ISload;
+        const int vectors = target_mode ? (input_map_channel - first < input_channels_per_ISload ? input_map_channel - first : input_channels_per_ISload) : IS_load_rows[i_IS_load] / rows_per_input_channel;
         input_map_position = load_is_block(target_mode ? 0 : IS_load_rows[i_IS_load], input_map_position);
 
         i_block = 0;
-        for (int j_weight_load = 0; j_weight_load < weight_update_times_per_inst; j_weight_load++) {
-            if (target_export) schedule_batch(i_IS_load*weight_update_times_per_inst+j_weight_load,__func__,__LINE__); /* IP_BATCH */
-            //i_block = 
+        for (int j_weight_load = 0; j_weight_load < weight_update_times_per_inst; j_weight_load++)
+        {
+            if (target_export)
+                schedule_batch(i_IS_load * weight_update_times_per_inst + j_weight_load, __func__, __LINE__); /* IP_BATCH */
+            // i_block =
             wu_ls_bank(weight_update_ls[j_weight_load], config.PC, i_block);
 
-            for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
+            for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++)
+            {
                 idle();
             }
 
-            for (int i_input_channel = i_IS_load * input_channels_per_ISload; 
-                 i_input_channel < i_IS_load * input_channels_per_ISload + 
-                 vectors;
-                 i_input_channel++) {
+            for (int i_input_channel = i_IS_load * input_channels_per_ISload;
+                 i_input_channel < i_IS_load * input_channels_per_ISload +
+                                       vectors;
+                 i_input_channel++)
+            {
 
-                for (int j_ls = 0; j_ls < weight_update_ls[j_weight_load]; j_ls++) {
+                for (int j_ls = 0; j_ls < weight_update_ls[j_weight_load]; j_ls++)
+                {
                     int j_compute_block = i_block + j_ls;
                     compute(i_input_channel, j_compute_block, 0);
                 }
@@ -1025,30 +1297,40 @@ void is_process(void) {
 
             i_block += weight_update_ls[j_weight_load];
         }
-        if (target_export) schedule_ip_cache(first,vectors,1,__func__,__LINE__); /* IP_CACHE_EVICT */
+        if (target_export)
+            schedule_ip_cache(first, vectors, 1, __func__, __LINE__); /* IP_CACHE_EVICT */
     }
 }
 
-void ws_process(void) {
+void ws_process(void)
+{
     int i_block = 0;
 
     // 假设rows_per_input_channel和input_channels_per_ISload已经定义
-    if (target_export) {
+    if (target_export)
+    {
         schedule_cache(input_channels_per_ISload, __func__, __LINE__); /* A2B_CACHE_FILL */
-    } else {
+    }
+    else
+    {
         load_is_block(rows_per_input_channel * input_channels_per_ISload, 0);
     }
 
-    for (int i_weight_update = 0; i_weight_update < weight_update_times_per_inst; i_weight_update++) {
-        if (target_export) schedule_batch(i_weight_update, __func__, __LINE__); /* A2B_BATCH */
+    for (int i_weight_update = 0; i_weight_update < weight_update_times_per_inst; i_weight_update++)
+    {
+        if (target_export)
+            schedule_batch(i_weight_update, __func__, __LINE__); /* A2B_BATCH */
         wu_ls_bank(weight_update_ls[i_weight_update], config.PC, i_block);
 
-        for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
+        for (int i = 0; !target_export && i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++)
+        {
             idle();
         }
 
-        for (int i_input_channel = 0; i_input_channel < input_map_channel; i_input_channel++) {
-            for (int j_ls = 0; j_ls < weight_update_ls[i_weight_update]; j_ls++) {
+        for (int i_input_channel = 0; i_input_channel < input_map_channel; i_input_channel++)
+        {
+            for (int j_ls = 0; j_ls < weight_update_ls[i_weight_update]; j_ls++)
+            {
                 int j_compute_block = i_block + j_ls;
                 compute(i_input_channel, j_compute_block, 0);
             }
@@ -1058,18 +1340,22 @@ void ws_process(void) {
     }
 }
 
-void proj_process(int a, int b, int c){ //实际上的输入参数是input和weight map的长宽
+void proj_process(int a, int b, int c)
+{ // 实际上的输入参数是input和weight map的长宽
     weight_map_channel = a;
     weight_map_length = b;
 
     input_map_length = b;
     input_map_channel = c;
 
-    if (target_mode) {
+    if (target_mode)
+    {
         input_channels_per_ISload = (int)target_cache_vectors(&target);
         if (target.ip_export)
-            IS_load_times_per_inst=(input_map_channel+input_channels_per_ISload-1)/input_channels_per_ISload;
-    } else {
+            IS_load_times_per_inst = (input_map_channel + input_channels_per_ISload - 1) / input_channels_per_ISload;
+    }
+    else
+    {
         input_data_per_row = floor(acc0.InputSRAMWidth / config.DATA_WIDTH);
         rows_per_input_channel = (int)ceil((float)input_map_length / input_data_per_row);
         input_channels_per_ISload = acc0.InputSRAMDepth / rows_per_input_channel;
@@ -1077,13 +1363,16 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
             input_channels_per_ISload = input_map_channel;
         if (input_channels_per_ISload == 0)
             IS_load_times_per_inst = 0;
-        else{
+        else
+        {
             IS_load_times_per_inst = (int)ceil((float)input_map_channel / input_channels_per_ISload);
-            IS_load_rows = (int*)malloc(IS_load_times_per_inst * sizeof(int));
-            for (int i = 0; i < IS_load_times_per_inst; ++i) {
+            IS_load_rows = (int *)malloc(IS_load_times_per_inst * sizeof(int));
+            for (int i = 0; i < IS_load_times_per_inst; ++i)
+            {
                 IS_load_rows[i] = input_channels_per_ISload * rows_per_input_channel;
             }
-            if (input_map_channel % input_channels_per_ISload != 0) {
+            if (input_map_channel % input_channels_per_ISload != 0)
+            {
                 IS_load_rows[IS_load_times_per_inst - 1] = (input_map_channel % input_channels_per_ISload) * rows_per_input_channel;
             }
         }
@@ -1102,74 +1391,93 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     weight_block_num = weight_block_col * weight_block_row;
     weight_update_times_per_inst = (int)ceil((float)weight_block_num / config.SCR);
 
-    weight_update_ls = (int*)malloc(weight_update_times_per_inst * sizeof(int));
-    for (int i = 0; i < weight_update_times_per_inst; ++i) {
+    weight_update_ls = (int *)malloc(weight_update_times_per_inst * sizeof(int));
+    for (int i = 0; i < weight_update_times_per_inst; ++i)
+    {
         weight_update_ls[i] = config.SCR;
     }
-    if (weight_block_num % config.SCR != 0) {
+    if (weight_block_num % config.SCR != 0)
+    {
         weight_update_ls[weight_update_times_per_inst - 1] = weight_block_num % config.SCR;
     }
 
     para_times = weight_block_row;
     acc_times = weight_block_col;
 
-    if (!target_mode) {
+    if (!target_mode)
+    {
         weight_map_channel = para_times * config.PC;
         weight_map_length = acc_times * config.AL;
 
-        input_map_length  = acc_times * config.AL;
+        input_map_length = acc_times * config.AL;
         input_map_channel = input_map_channel;
     }
 
     // 分配ls_matrix并初始化为0
-    ls_matrix = (int**)malloc(para_times * sizeof(int*));
-    for(int i = 0; i < para_times; ++i) {
-        ls_matrix[i] = (int*)malloc(acc_times * sizeof(int));
-        for(int j = 0; j < acc_times; ++j) {
+    ls_matrix = (int **)malloc(para_times * sizeof(int *));
+    for (int i = 0; i < para_times; ++i)
+    {
+        ls_matrix[i] = (int *)malloc(acc_times * sizeof(int));
+        for (int j = 0; j < acc_times; ++j)
+        {
             ls_matrix[i][j] = 0;
         }
     }
 
     // 分配atos_matrix并初始化为0
-    atos_matrix = (int**)malloc(para_times * sizeof(int*));
-    for(int i = 0; i < para_times; ++i) {
-        atos_matrix[i] = (int*)malloc(acc_times * sizeof(int));
-        for(int j = 0; j < acc_times; ++j) {
+    atos_matrix = (int **)malloc(para_times * sizeof(int *));
+    for (int i = 0; i < para_times; ++i)
+    {
+        atos_matrix[i] = (int *)malloc(acc_times * sizeof(int));
+        for (int j = 0; j < acc_times; ++j)
+        {
             atos_matrix[i][j] = 0;
         }
     }
 
     int ls_fg = 0;
 
-    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0) {
+    if (strcmp(data_stream, "isap") == 0 || strcmp(data_stream, "wsap") == 0)
+    {
         // ap 优先acc
-        for (int i_pt = 0; i_pt < para_times; ++i_pt) {
-            for (int i_at = 0; i_at < acc_times; ++i_at) {
-                ls_matrix[i_pt][i_at] = ls_fg;
-                ls_fg = (ls_fg + 1) % config.SCR;
-            }
-        }
-        
-        for (int i_pt = 0; i_pt < para_times; ++i_pt) {
-            int row_st_fg = 0; // row start flag
-            for (int i_at = 0; i_at < acc_times; ++i_at) {    
-                if (i_at == acc_times-1 || ls_matrix[i_pt][i_at] == acc0.LocalSwitchrows - 1) {
-                    atos_matrix[i_pt][i_at] = row_st_fg == 0 ? 1 : 2; // 1 for TOS, 2 for AOS
-                    row_st_fg = 1;
-                }
-            }
-        }
-    } else if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "wspp") == 0) {
-        // pp 优先para
-        for (int i_at = 0; i_at < acc_times; ++i_at) {
-            for (int i_pt = 0; i_pt < para_times; ++i_pt) {
+        for (int i_pt = 0; i_pt < para_times; ++i_pt)
+        {
+            for (int i_at = 0; i_at < acc_times; ++i_at)
+            {
                 ls_matrix[i_pt][i_at] = ls_fg;
                 ls_fg = (ls_fg + 1) % config.SCR;
             }
         }
 
-        for (int i_pt = 0; i_pt < para_times; ++i_pt) {
-            for (int i_at = 0; i_at < acc_times; ++i_at) {    
+        for (int i_pt = 0; i_pt < para_times; ++i_pt)
+        {
+            int row_st_fg = 0; // row start flag
+            for (int i_at = 0; i_at < acc_times; ++i_at)
+            {
+                if (i_at == acc_times - 1 || ls_matrix[i_pt][i_at] == acc0.LocalSwitchrows - 1)
+                {
+                    atos_matrix[i_pt][i_at] = row_st_fg == 0 ? 1 : 2; // 1 for TOS, 2 for AOS
+                    row_st_fg = 1;
+                }
+            }
+        }
+    }
+    else if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "wspp") == 0)
+    {
+        // pp 优先para
+        for (int i_at = 0; i_at < acc_times; ++i_at)
+        {
+            for (int i_pt = 0; i_pt < para_times; ++i_pt)
+            {
+                ls_matrix[i_pt][i_at] = ls_fg;
+                ls_fg = (ls_fg + 1) % config.SCR;
+            }
+        }
+
+        for (int i_pt = 0; i_pt < para_times; ++i_pt)
+        {
+            for (int i_at = 0; i_at < acc_times; ++i_at)
+            {
                 atos_matrix[i_pt][i_at] = i_at == 0 ? 1 : 2; // 1 for TOS, 2 for AOS
             }
         }
@@ -1179,13 +1487,16 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     if (target_export)
         schedule_tiling(acc_times, para_times, weight_update_times_per_inst,
                         weight_update_ls, ls_matrix, atos_matrix, __func__, __LINE__); /* A2B_TILING */
-    if (target_mode) {
-        if (target.ip_export) {
+    if (target_mode)
+    {
+        if (target.ip_export)
+        {
 #ifdef TARGET_IP_ZERO_LOAD
-            IS_load_times_per_inst=0;
+            IS_load_times_per_inst = 0;
 #endif
 #ifdef TARGET_IP_FORCE_WP
-            data_stream=target.pf_export ? "wspp" : "wsap"; ws_process();
+            data_stream = target.pf_export ? "wspp" : "wsap";
+            ws_process();
 #else
             is_process();
 #endif
@@ -1237,27 +1548,29 @@ void proj_process(int a, int b, int c){ //实际上的输入参数是input和wei
     //     printf("\n");
     // }
 
-
     gt_in_map_record = 0;
     os_virtual_depth = acc0.OutputSRAMDepth;
 
-    if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "isap") == 0){
+    if (strcmp(data_stream, "ispp") == 0 || strcmp(data_stream, "isap") == 0)
+    {
         is_process();
     }
     else
         ws_process();
-
 }
 
-void ph2_process(void){
+void ph2_process(void)
+{
     strcpy(data_stream, "wspp");
-    for(int i=0; i<dim3; i++){
-        proj_process(dim1,dim2/dim3,dim1);
-        proj_process(dim2/dim3,dim1,dim1);
-    }//    e.g.    "a2a", N, 768, 12
+    for (int i = 0; i < dim3; i++)
+    {
+        proj_process(dim1, dim2 / dim3, dim1);
+        proj_process(dim2 / dim3, dim1, dim1);
+    } //    e.g.    "a2a", N, 768, 12
 }
 
-void lhd_process(void){
+void lhd_process(void)
+{
     int K_map_channel = dim1;
     int K_map_length = dim2 / dim3;
     int K_para_times = ceil((float)K_map_channel / config.PC);
@@ -1274,7 +1587,8 @@ void lhd_process(void){
 
     int using_scr = K_map_block + V_map_block;
 
-    if (using_scr > config.SCR){
+    if (using_scr > config.SCR)
+    {
         printf("ERROR\n");
         return;
     }
@@ -1308,42 +1622,50 @@ void lhd_process(void){
 
     // 分配ls_matrix
     int ls_fg = 0;
-    ls_matrix = (int**)malloc(para_times * sizeof(int*));
-    for(int i = 0; i < para_times; ++i) {
-        ls_matrix[i] = (int*)malloc(acc_times * sizeof(int));
-        for(int j = 0; j < acc_times; ++j) {
+    ls_matrix = (int **)malloc(para_times * sizeof(int *));
+    for (int i = 0; i < para_times; ++i)
+    {
+        ls_matrix[i] = (int *)malloc(acc_times * sizeof(int));
+        for (int j = 0; j < acc_times; ++j)
+        {
             ls_matrix[i][j] = ls_fg;
             ls_fg++;
         }
     }
 
     // 分配atos_matrix
-    atos_matrix = (int**)malloc(para_times * sizeof(int*));
-    for(int i = 0; i < para_times; ++i) {
-        atos_matrix[i] = (int*)malloc(acc_times * sizeof(int));
-        for(int j = 0; j < acc_times; ++j) {
+    atos_matrix = (int **)malloc(para_times * sizeof(int *));
+    for (int i = 0; i < para_times; ++i)
+    {
+        atos_matrix[i] = (int *)malloc(acc_times * sizeof(int));
+        for (int j = 0; j < acc_times; ++j)
+        {
             atos_matrix[i][j] = 0;
         }
     }
 
     int i_block = 0;
-    for(int i = 0; i < K_para_times; i++){
-        for (int j = 0; j < K_acc_times; j++){
+    for (int i = 0; i < K_para_times; i++)
+    {
+        for (int j = 0; j < K_acc_times; j++)
+        {
             if (j == K_acc_times - 1)
                 atos_matrix[i_block][0] = 1;
-            else 
+            else
                 atos_matrix[i_block][0] = 0;
-            i_block+=1;
+            i_block += 1;
         }
     }
 
-    for(int i = 0; i < V_para_times; i++){
-        for (int j = 0; j < V_acc_times; j++){
+    for (int i = 0; i < V_para_times; i++)
+    {
+        for (int j = 0; j < V_acc_times; j++)
+        {
             if (j == V_acc_times - 1)
                 atos_matrix[i_block][0] = 1;
-            else 
+            else
                 atos_matrix[i_block][0] = 0;
-            i_block+=1;
+            i_block += 1;
         }
     }
 
@@ -1365,44 +1687,50 @@ void lhd_process(void){
     //     printf("\n");
     // }
 
-    for(int i_head=0; i_head<dim3; i_head++){
+    for (int i_head = 0; i_head < dim3; i_head++)
+    {
         // 我们不用更新IS，which is great
         // 首先更新K和V矩阵到CIM中
-        strcpy(data_stream, "wspp");//新增的
+        strcpy(data_stream, "wspp"); // 新增的
         wu_ls_bank(para_times, config.PC, 0);
-        for (int i = 0; i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++) {
+        for (int i = 0; i < acc0.CIMsWriteWidth / acc0.BusWidth * config.WEIGHT_ROW; i++)
+        {
             idle();
         }
-        for (int j = 0; j < ceil((float)dim1 / Q_serial_times); j++){
+        for (int j = 0; j < ceil((float)dim1 / Q_serial_times); j++)
+        {
             int current_serial_times = Q_serial_times;
-            if (j == ceil((float)dim1 / Q_serial_times) - 1) 
+            if (j == ceil((float)dim1 / Q_serial_times) - 1)
                 current_serial_times = min(dim1 - j * Q_serial_times, Q_serial_times);
 
             strcpy(data_stream, "wspp");
-            for (int k = 0; k < current_serial_times; k++){
-                for(int m_count=0; m_count<Sqk; m_count++){
+            for (int k = 0; k < current_serial_times; k++)
+            {
+                for (int m_count = 0; m_count < Sqk; m_count++)
+                {
                     compute(j * Q_serial_times + k, m_count, 0);
-                    //compute(int i_input_channel, int computing_block,int fussion_flag = 0)
+                    // compute(int i_input_channel, int computing_block,int fussion_flag = 0)
                 }
             }
             strcpy(data_stream, "wspp");
-            for (int k = 0; k < current_serial_times; k++){
-                for(int m_count=0; m_count<Spv; m_count++){
+            for (int k = 0; k < current_serial_times; k++)
+            {
+                for (int m_count = 0; m_count < Spv; m_count++)
+                {
                     compute(k, m_count + Sqk, 1);
-                    //compute(int fussion_count, int computing_block,int fussion_flag = 0)
+                    // compute(int fussion_count, int computing_block,int fussion_flag = 0)
                 }
             }
         }
-
     }
 }
 
-void a2a_process(void){
-    if (strcmp(data_stream, "ph2") == 0){
+void a2a_process(void)
+{
+    if (strcmp(data_stream, "ph2") == 0)
+    {
         ph2_process();
     }
     else if (strcmp(data_stream, "lhd") == 0)
         lhd_process();
 }
-
-
