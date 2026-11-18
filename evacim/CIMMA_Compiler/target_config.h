@@ -24,6 +24,8 @@ typedef struct {
 #define TARGET_MEMBER(name, expected) uint64_t name;
     TARGET_F7_NUMBERS(TARGET_MEMBER)
 #undef TARGET_MEMBER
+    int b5_export;
+    char caller_sha256[65], costs_sha256[65];
     int pf_export;
     int ip_export;
     int r_export, equal_mn;
@@ -32,6 +34,7 @@ typedef struct {
 } TargetConfig;
 
 /* 成功回傳 0；失敗回傳 2，不建立檔案。 */
+int target_parse_b5(int, char **, TargetConfig *);
 int target_parse(int argc, char **argv, TargetConfig *target);
 int target_parse_pf(int argc, char **argv, TargetConfig *target);
 int target_parse_ip_af(int argc, char **argv, TargetConfig *target);

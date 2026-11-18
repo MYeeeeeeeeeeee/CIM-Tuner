@@ -61,7 +61,7 @@ void schedule_tiling(int a, int p, int batches, const int *batch_sizes,
 {
     a_count = a; p_count = p; batch_count = batches;
     tiling_function = function; tiling_line = line;
-    if (a != 2 || p != 2 || batches != 2) { failed = 1; return; }
+    if (a != 2 || p != ((int)target_stored_lanes(configuration)+3)/4 || batches != p) { failed = 1; return; }
     for (int i = 0; i < batches; ++i) sizes[i] = batch_sizes[i];
     for (int ip = 0; ip < p; ++ip)
         for (int ia = 0; ia < a; ++ia) {
@@ -96,7 +96,7 @@ void schedule_ip_cache(int first, int vectors, int evict, const char *function, 
 void schedule_batch(int next, const char *function, int line)
 {
     (void)function;
-    if (next < 0 || next >= (configuration->ip_export?((int)target_stream_vectors(configuration)+1)/2*2:2)) { failed = 1; return; }
+    if (next < 0 || next >= (configuration->ip_export?((int)target_stream_vectors(configuration)+1)/2*batch_count:batch_count)) { failed = 1; return; }
     batch = next; batch_lines[next] = line;
 }
 
@@ -161,12 +161,27 @@ static void uses(int producer)
 
 int schedule_write(void)
 {
-    if (failed || !tiling_function || !batch_lines[0] || !batch_lines[1]) {
+    if (failed || !tiling_function || !batch_lines[0] || (batch_count>1 && !batch_lines[1])) {
         fprintf(stderr, "target-f7-export: 決策記錄不完整或超出 metadata 上限\n");
         return 2;
     }
     const TargetConfig *t = configuration;
-    if(t->r_export) {
+    if(t->b5_export) {
+        printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":6,\"request\":\"request-0\",\"provenance_manifest\":\"provenance.json\",\"config\":{");
+#define B5_NUMBER(name, expected) printf("\"" #name "\":%llu,",(unsigned long long)t->name);
+        TARGET_F7_NUMBERS(B5_NUMBER)
+#undef B5_NUMBER
+        printf("\"placement\":\"NR\",\"binding\":[0,1,2,3,4,5,6,7],\"weightStationary\":true,\"bitSerial\":true,\"profile\":\"behavioral\",\"operation\":\"proj\",\"dataflow\":\"wsap\",\"ppaEnabled\":false},"
+               "\"identities\":{\"caller\":\"%s\",\"candidate\":\"%s\",\"tensors\":\"%s\",\"costs\":\"%s\",\"proposal\":\"%s\"},"
+               "\"candidate_origin\":\"bounded_b5_case\",\"seed\":null,\"rng\":\"not_applicable\","
+               "\"tensors\":{\"X\":{\"role\":\"activation\",\"shape\":[%llu,9],\"bits\":8,\"layout\":\"row_major\",\"virtual_shape\":[%llu,16]},"
+               "\"W\":{\"role\":\"stored_weight\",\"shape\":[9,%llu],\"bits\":8,\"layout\":\"row_major\",\"virtual_shape\":[%d,16],\"virtual_layout\":\"n_k\"},"
+               "\"Y\":{\"role\":\"output\",\"shape\":[%llu,%llu],\"bits\":32,\"layout\":\"row_major\"}},"
+               "\"tiling\":{\"A\":%d,\"P\":%d,\"batch_sizes\":[",t->caller_sha256,t->candidate_sha256,t->tensor_sha256,t->costs_sha256,t->proposal_sha256,
+               (unsigned long long)t->m,(unsigned long long)t->m,(unsigned long long)t->n,p_count*4,(unsigned long long)t->m,(unsigned long long)t->n,a_count,p_count);
+        for(int i=0;i<batch_count;++i) printf("%s%d",i?",":"",sizes[i]);
+        printf("],\"source\":");
+    } else if(t->r_export) {
         printf("{\"format\":\"cim-tuner-logical-schedule\",\"version\":%d,\"request\":\"request-0\","
                "\"provenance_manifest\":\"provenance.json\",\"operand_role\":\"R\",\"external_shape\":[5,9,%llu],"
                "\"logical_shape\":[%llu,9,5],\"validation_case\":\"%s\",\"config\":{",
@@ -224,7 +239,7 @@ int schedule_write(void)
             ++index;
         }
     } else {
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < a_count*p_count; ++i)
             printf("%s{\"block\":%d,\"p\":%d,\"a\":%d,\"set\":%d,\"atos\":%d}",
                    i ? "," : "", i, i / 2, i % 2, blocks[i][0], blocks[i][1]);
     }

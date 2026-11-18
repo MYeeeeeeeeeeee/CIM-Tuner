@@ -70,12 +70,13 @@ int main(int argc, char *argv[])
 {
     if (argc > 1 && !strncmp(argv[1], "--", 2))
     {
-        if (strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
+        if (strcmp(argv[1], "--target-b5-nr-wp-af-export") && strcmp(argv[1], "--target-f7") && strcmp(argv[1], "--target-f7-export") &&
             strcmp(argv[1], "--target-f7-pf-export") && strcmp(argv[1], "--target-f7-ip-af-export") && strcmp(argv[1], "--target-f7-ip-pf-export") && strcmp(argv[1], "--target-f7-r-wp-af-export") && strcmp(argv[1], "--target-f7-r-wp-pf-export") && strcmp(argv[1], "--target-f7-r-ip-af-export") && strcmp(argv[1], "--target-f7-r-ip-pf-export"))
         {
             fprintf(stderr, "不支援的 compiler 目標模式：%s\n", argv[1]);
             return 2;
         }
+        int b5 = !strcmp(argv[1], "--target-b5-nr-wp-af-export");
         int rippf = !strcmp(argv[1], "--target-f7-r-ip-pf-export");
         int rip = rippf || !strcmp(argv[1], "--target-f7-r-ip-af-export");
         int rpf = !strcmp(argv[1], "--target-f7-r-wp-pf-export");
@@ -86,7 +87,7 @@ int main(int argc, char *argv[])
         int pf = rippf || rpf || !strcmp(argv[1], "--target-f7-pf-export");
         int ippf = rippf || !strcmp(argv[1], "--target-f7-ip-pf-export");
         int ip = rip || ippf || !strcmp(argv[1], "--target-f7-ip-af-export");
-        int result = rippf ? target_parse_r_ip_pf(argc - 2, argv + 2, &target) : rip   ? target_parse_r_ip_af(argc - 2, argv + 2, &target)
+        int result = b5 ? target_parse_b5(argc - 2, argv + 2, &target) : rippf ? target_parse_r_ip_pf(argc - 2, argv + 2, &target) : rip   ? target_parse_r_ip_af(argc - 2, argv + 2, &target)
                                                                              : rpf     ? target_parse_r_pf(argc - 2, argv + 2, &target)
                                                                              : rotated ? target_parse_r(argc - 2, argv + 2, &target, equal_mn)
                                                                              : ippf    ? target_parse_ip_pf(argc - 2, argv + 2, &target)
@@ -96,7 +97,7 @@ int main(int argc, char *argv[])
         if (result)
             return result;
         target_mode = 1;
-        target_export = rotated || ip || pf || !strcmp(argv[1], "--target-f7-export");
+        target_export = b5 || rotated || ip || pf || !strcmp(argv[1], "--target-f7-export");
         if (target_export)
             schedule_begin(&target);
         /* 只提供共用分塊所需欄位，不呼叫原硬體 packing／bus 初始化。 */

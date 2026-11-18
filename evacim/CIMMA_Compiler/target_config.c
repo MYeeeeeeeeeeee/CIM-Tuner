@@ -46,7 +46,8 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
     unsigned char seen[sizeof(fields) / sizeof(fields[0])] = {0};
     memset(target, 0, sizeof(*target));
     target->ip_export = pf == 2 || pf == 3 || pf == 7 || pf == 8;
-    target->r_export = pf >= 4; target->equal_mn = pf == 5;
+    target->b5_export = pf == 9;
+    target->r_export = pf >= 4 && pf != 9; target->equal_mn = pf == 5;
     int validation_seen = 0;
     target->pf_export = pf == 1 || pf == 3 || pf == 6 || pf == 8;
     for (int arg = 0; arg < argc; ++arg) {
@@ -57,7 +58,7 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
             if (validation_seen++ || strcmp(equals+1,"equal_mn")) return reject("非法驗證案例",argv[arg]);
             continue;
         }
-        char *hash = target->r_export && length==strlen("tensorSha256") && !strncmp(argv[arg],"tensorSha256",length) ? target->tensor_sha256 : pf && length == strlen("candidateSha256") &&
+        char *hash = target->b5_export && length==strlen("callerSha256") && !strncmp(argv[arg],"callerSha256",length) ? target->caller_sha256 : target->b5_export && length==strlen("costsSha256") && !strncmp(argv[arg],"costsSha256",length) ? target->costs_sha256 : (target->r_export || target->b5_export) && length==strlen("tensorSha256") && !strncmp(argv[arg],"tensorSha256",length) ? target->tensor_sha256 : pf && length == strlen("candidateSha256") &&
             !strncmp(argv[arg], "candidateSha256", length) ? target->candidate_sha256 :
             pf && length == strlen("proposalSha256") && !strncmp(argv[arg], "proposalSha256", length) ?
             target->proposal_sha256 : NULL;
@@ -78,23 +79,29 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
         seen[i] = 1;
         const char *value = equals + 1;
         if (fields[i].text) {
-            const char *expected = target->r_export ? (!strcmp(fields[i].name,"placement") ? "R" : !strcmp(fields[i].name,"dataflow") ? (target->ip_export ? (target->pf_export ? "ispp" : "isap") : target->pf_export ? "wspp" : "wsap") : fields[i].text) : pf && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
+            const char *expected = target->r_export ? (!strcmp(fields[i].name,"placement") ? "R" : !strcmp(fields[i].name,"dataflow") ? (target->ip_export ? (target->pf_export ? "ispp" : "isap") : target->pf_export ? "wspp" : "wsap") : fields[i].text) : pf && !target->b5_export && !strcmp(fields[i].name, "dataflow") ? (pf == 3 ? "ispp" : pf == 2 ? "isap" : "wspp") : fields[i].text;
             if (strcmp(value, expected)) return reject("不支援的固定 F7 配置", fields[i].name);
         } else {
             uint64_t number;
             if (!decimal(value, &number)) return reject("無效或溢位的非負整數", fields[i].name);
-            if (number != (target->equal_mn && !strcmp(fields[i].name,"n") ? 5 : fields[i].expected)) return reject("不支援的固定 F7 配置", fields[i].name);
+            if (!(target->b5_export && (!strcmp(fields[i].name,"m") || !strcmp(fields[i].name,"n"))) && number != (target->equal_mn && !strcmp(fields[i].name,"n") ? 5 : fields[i].expected)) return reject("不支援的固定 F7 配置", fields[i].name);
             *(uint64_t *)((unsigned char *)target + fields[i].offset) = number;
         }
     }
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
         if (!seen[i]) return reject("缺少必要欄位", fields[i].name);
+    if (target->b5_export && !((target->m==5 && target->n==7) || (target->m==2 && target->n==1)))
+        return reject("B5僅支援B0或K1", "m/n");
+    if (target->b5_export && (!*target->caller_sha256 || !*target->costs_sha256 || !*target->tensor_sha256))
+        return reject("B5來源閉包不完整", "caller/costs/tensors");
     if (pf && (!*target->candidate_sha256 || !*target->proposal_sha256))
         return reject("缺少必要欄位", "candidateSha256/proposalSha256");
     if (target->r_export && (!*target->tensor_sha256 || (target->equal_mn && !validation_seen)))
         return reject("缺少R身分或驗證案例", "tensorSha256/validationCase");
     return 0;
 }
+
+int target_parse_b5(int argc, char **argv, TargetConfig *t) { return parse(argc,argv,t,9); }
 
 int target_parse(int argc, char **argv, TargetConfig *target)
 {
@@ -208,8 +215,8 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
 
     if (t->r_export && !emit) return 0;
     uint64_t x, xv, w, wv, r, c, gb, pe, link;
-    if (!target_x_index(t, 1, 8, &x, &xv) || !target_w_index(t, 8, 6, &w, &wv) ||
-        !target_fragment(t, 1, 1, 1, 0, &r, &c) ||
+    if (!target_x_index(t, 1, 8, &x, &xv) || !target_w_index(t, 8, t->n-1, &w, &wv) ||
+        !target_fragment(t, p-1, 1, ((t->n-1)%4)/2, 0, &r, &c) ||
         !target_line_operations(1, t->globalBufferReadBytesPerCycle, &gb) ||
         !target_line_operations(1, t->peLocalBufferReadBytesPerCycle, &pe) ||
         !target_line_operations(1, t->tileInterconnectBytesPerCycle, &link))
