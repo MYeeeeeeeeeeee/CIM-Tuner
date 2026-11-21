@@ -90,8 +90,9 @@ static int parse(int argc, char **argv, TargetConfig *target, int pf)
     }
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
         if (!seen[i]) return reject("缺少必要欄位", fields[i].name);
-    if (target->b5_export && !((target->m==5 && target->n==7) || (target->m==2 && target->n==1)))
-        return reject("B5僅支援B0或K1", "m/n");
+    if (target->b5_export && !((target->m==5 && target->n==7) ||
+        ((target->m==1 || target->m==2 || target->m==3) && target->n==1)))
+        return reject("B5僅支援B0、K1及CACHE-LOW/HIGH", "m/n");
     if (target->b5_export && (!*target->caller_sha256 || !*target->costs_sha256 || !*target->tensor_sha256))
         return reject("B5來源閉包不完整", "caller/costs/tensors");
     if (pf && (!*target->candidate_sha256 || !*target->proposal_sha256))
@@ -192,7 +193,7 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
 
     const uint64_t cache = target_cache_vectors(t);
     const uint64_t slot = t->logicalCols * (t->outputBits / 8);
-    if (cache != 2 || cache * t->k > t->inputCacheBytes ||
+    if (cache != (target_stream_vectors(t)<2 ? target_stream_vectors(t) : 2) || cache * t->k > t->inputCacheBytes ||
         t->inputCacheBytes > t->globalBufferBytes ||
         t->outputContextBytes > t->globalBufferBytes - t->inputCacheBytes ||
         t->outputContextBytes / slot != 512)
@@ -215,7 +216,7 @@ static int target_report(const TargetConfig *t, int a, int p, int batches,
 
     if (t->r_export && !emit) return 0;
     uint64_t x, xv, w, wv, r, c, gb, pe, link;
-    if (!target_x_index(t, 1, 8, &x, &xv) || !target_w_index(t, 8, t->n-1, &w, &wv) ||
+    if (!target_x_index(t, t->m>1 ? 1 : 0, 8, &x, &xv) || !target_w_index(t, 8, t->n-1, &w, &wv) ||
         !target_fragment(t, p-1, 1, ((t->n-1)%4)/2, 0, &r, &c) ||
         !target_line_operations(1, t->globalBufferReadBytesPerCycle, &gb) ||
         !target_line_operations(1, t->peLocalBufferReadBytesPerCycle, &pe) ||

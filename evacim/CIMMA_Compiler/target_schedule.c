@@ -72,7 +72,8 @@ void schedule_tiling(int a, int p, int batches, const int *batch_sizes,
 
 void schedule_cache(int vectors, const char *function, int line)
 {
-    if (vectors != 2) { failed = 1; return; }
+    const int prefix = target_stream_vectors(configuration)<2 ? target_stream_vectors(configuration) : 2;
+    if (vectors != prefix) { failed = 1; return; }
     for (int m = 0; m < vectors; ++m) {
         Op *o = append(FILL, function, line); if (!o) return;
         o->m = m; o->k1 = 9; fills[m] = o->id;
